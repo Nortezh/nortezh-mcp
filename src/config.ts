@@ -7,14 +7,31 @@ import { dirname, join } from 'node:path'
 /**
  * Base URL of the Nortezh user API, INCLUDING the /user prefix.
  *
- * Required, with no default on purpose: no production hostname exists anywhere in the
- * nortezh workspace — the k8s manifests only carry a `${NT_API_ENDPOINT}` placeholder —
- * so any default would be invented. Known-real values:
+ * Two ways to get this wrong, both of which fail as an opaque 404 or an unreachable
+ * browser tab rather than as anything that names the cause:
  *
- *   local    http://localhost:18080/user
- *   staging  https://api-stag-899570118063554590.rcf2.deploys.app/user
+ *  - dropping the `/user` prefix. cmd/api/main.go mounts every user route under
+ *    `mux.Group("/user", nil)`, so a correct host without it routes nothing, login
+ *    included.
+ *  - using a `*.internal.*` host. That is the cluster-internal ingress (ingress class
+ *    `parapet-internal`, no public load balancer, no TLS — deployer/k8s/ingress.go), so
+ *    it resolves only from inside the cluster. The external host is the same name with
+ *    `.internal` removed, over https.
+ *
+ * Known-real values:
+ *
+ *   production  https://api.nortezh.com/user   (the default)
+ *   local       http://localhost:18080/user
  */
 export const API_URL_ENV = 'NORTEZH_API_URL'
+
+/**
+ * Production, used when NORTEZH_API_URL is unset.
+ *
+ * Same value kunn defaults to (`KUNN_AUTH_URL`), minus the trailing `/auth` this client
+ * appends itself.
+ */
+export const DEFAULT_API_URL = 'https://api.nortezh.com/user'
 
 /** Optional: a bearer token supplied directly, bypassing `nortezh-mcp login`. */
 export const TOKEN_ENV = 'NORTEZH_TOKEN'
@@ -55,20 +72,18 @@ export function writeCredentials(credentials: Credentials): string {
   return path
 }
 
-export function requireApiUrl(): string {
-  const value = process.env[API_URL_ENV]?.trim()
-  if (value === undefined || value === '') {
-    throw new Error(
-      `${API_URL_ENV} is not set. It must be the Nortezh user API base URL including the ` +
-        '/user prefix, e.g. http://localhost:18080/user',
-    )
-  }
+/** The API base URL: NORTEZH_API_URL if set, production otherwise. */
+export function resolveApiUrl(): string {
+  const raw = process.env[API_URL_ENV]?.trim()
+  const value = raw === undefined || raw === '' ? DEFAULT_API_URL : raw
   return value.replace(/\/+$/, '')
 }
 
 export interface Resolved {
   apiUrl: string
   token: string
+  /** True when the token came from the environment rather than the stored login. */
+  fromEnv: boolean
 }
 
 /**
@@ -78,24 +93,26 @@ export interface Resolved {
  * developer's saved login without deleting it.
  */
 export function resolveAuth(): Resolved {
-  const apiUrl = requireApiUrl()
+  const apiUrl = resolveApiUrl()
 
-  const fromEnv = process.env[TOKEN_ENV]?.trim()
-  if (fromEnv !== undefined && fromEnv !== '') return { apiUrl, token: fromEnv }
+  const supplied = process.env[TOKEN_ENV]?.trim()
+  if (supplied !== undefined && supplied !== '') {
+    return { apiUrl, token: supplied, fromEnv: true }
+  }
 
   const stored = readCredentials()
   if (stored === null) {
     throw new Error(
-      `No credentials. Run \`nortezh-mcp login\` (with ${API_URL_ENV} set), or set ${TOKEN_ENV}.`,
+      `No credentials for ${apiUrl}. Run \`nortezh-mcp login\`, or set ${TOKEN_ENV}.`,
     )
   }
 
   if (stored.apiUrl !== '' && stored.apiUrl !== apiUrl) {
     throw new Error(
-      `Stored credentials are for ${stored.apiUrl} but ${API_URL_ENV} is ${apiUrl}. ` +
+      `Stored credentials are for ${stored.apiUrl} but the API is ${apiUrl}. ` +
         'Run `nortezh-mcp login` again against this API.',
     )
   }
 
-  return { apiUrl, token: stored.token }
+  return { apiUrl, token: stored.token, fromEnv: false }
 }

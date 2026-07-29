@@ -18,16 +18,39 @@ npm install
 npm run build
 ```
 
-Then sign in. `NORTEZH_API_URL` is the user API base URL **including the `/user` prefix**:
+Then sign in. Production is the default, so this is the whole setup:
 
 ```bash
-export NORTEZH_API_URL=http://localhost:18080/user
 node dist/index.js login
 ```
 
 That opens your browser, runs the normal Google login, and writes the token to
-`~/.nortezh/credentials.json` (mode `600`). Tokens last **7 days**, so expect to re-run it
-about weekly — the server tells you when that is the problem.
+`~/.nortezh/credentials.json` (mode `600`).
+
+Tokens last **7 days**. You do not have to track that: when a tool call comes back
+`UNAUTHORIZED`, the server re-opens the browser once and retries the call. Set
+`NORTEZH_TOKEN` if you would rather it never did that.
+
+To point somewhere else, set `NORTEZH_API_URL` — the user API base URL **including the
+`/user` prefix**:
+
+```bash
+export NORTEZH_API_URL=http://localhost:18080/user   # local stack
+```
+
+| | |
+|---|---|
+| production (default) | `https://api.nortezh.com/user` |
+| local | `http://localhost:18080/user` |
+
+Two ways to get that wrong, both of which fail without saying why:
+
+- **Dropping `/user`.** `cmd/api/main.go` mounts every user route under
+  `mux.Group("/user", nil)`, so a correct host without the prefix routes nothing.
+- **Using a `*.internal.*` host.** That is the cluster-internal ingress — ingress class
+  `parapet-internal`, no public load balancer, no TLS (`deployer/k8s/ingress.go:134-136`)
+  — so it only resolves from inside the cluster. The external host is the same name with
+  `.internal` removed, over `https`.
 
 ## MCP client configuration
 
@@ -38,22 +61,18 @@ Claude Desktop (`claude_desktop_config.json`) or Claude Code (`.mcp.json`):
   "mcpServers": {
     "nortezh": {
       "command": "node",
-      "args": ["/absolute/path/to/nortezh-mcp/dist/index.js"],
-      "env": {
-        "NORTEZH_API_URL": "http://localhost:18080/user"
-      }
+      "args": ["/absolute/path/to/nortezh-mcp/dist/index.js"]
     }
   }
 }
 ```
 
-`NORTEZH_TOKEN` can be set instead of logging in; it takes precedence over the stored
-credentials, which is what you want in CI or a script.
+Add `"env": { "NORTEZH_API_URL": "http://localhost:18080/user" }` to point at a local
+stack instead of production.
 
-There is **no default API URL** on purpose: no production hostname exists anywhere in the
-nortezh workspace — the k8s manifests carry only a `${NT_API_ENDPOINT}` placeholder — so
-any default here would be invented. Known-real values are the local one above and staging,
-`https://api-stag-899570118063554590.rcf2.deploys.app/user`.
+`NORTEZH_TOKEN` can be set instead of logging in. It takes precedence over the stored
+credentials and **disables the automatic re-login**, which is what you want in CI or any
+context with no browser.
 
 ## Commands
 

@@ -12,7 +12,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
 import { NortezhClient } from './client.js'
-import { API_URL_ENV, requireApiUrl, resolveAuth } from './config.js'
+import { API_URL_ENV, DEFAULT_API_URL, resolveApiUrl, resolveAuth, TOKEN_ENV } from './config.js'
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
@@ -20,10 +20,41 @@ import { TOOLS, type ToolSpec } from './generated/tools.js'
 const VERSION = '0.1.0'
 
 async function runServer(): Promise<void> {
-  const { apiUrl, token } = resolveAuth()
+  const { apiUrl, token, fromEnv } = resolveAuth()
   const client = new NortezhClient({ apiUrl, token })
 
   const byName = new Map<string, ToolSpec>(TOOLS.map((tool) => [tool.name, tool]))
+
+  // Tokens expire after 7 days, and the failure lands mid-conversation. Rather than
+  // making the user notice a tool error and go run a command, re-run the browser login
+  // once and retry — the same thing `kunn` does on ErrUnauthorized.
+  //
+  // Two guards. A token supplied through NORTEZH_TOKEN is never replaced: it was chosen
+  // deliberately, and the CI case that sets it has no browser to open. And concurrent
+  // tool calls share one login attempt, so an expiry does not open a browser tab per
+  // in-flight request.
+  let reloginInFlight: Promise<boolean> | null = null
+
+  async function relogin(): Promise<boolean> {
+    if (fromEnv) return false
+    if (reloginInFlight !== null) return await reloginInFlight
+
+    reloginInFlight = (async () => {
+      try {
+        console.error('Token rejected — reopening the browser to sign in again.')
+        await login(apiUrl)
+        client.setToken(resolveAuth().token)
+        return true
+      } catch (error) {
+        console.error(`Re-login failed: ${error instanceof Error ? error.message : String(error)}`)
+        return false
+      } finally {
+        reloginInFlight = null
+      }
+    })()
+
+    return await reloginInFlight
+  }
 
   const server = new Server(
     { name: 'nortezh', version: VERSION },
@@ -53,7 +84,13 @@ async function runServer(): Promise<void> {
       }
     }
 
-    const outcome = await client.call(tool.route, request.params.arguments ?? {})
+    const args = request.params.arguments ?? {}
+    let outcome = await client.call(tool.route, args)
+
+    // Retried at most once: if the fresh token is rejected too, the problem is not expiry.
+    if (!outcome.ok && outcome.code === UNAUTHORIZED && (await relogin())) {
+      outcome = await client.call(tool.route, args)
+    }
 
     if (outcome.ok) {
       return {
@@ -65,7 +102,9 @@ async function runServer(): Promise<void> {
     // the model treating a failure as a result.
     const hint =
       outcome.code === UNAUTHORIZED
-        ? '\n\nThe token is missing, invalid or expired (they last 7 days). Run `nortezh-mcp login`.'
+        ? fromEnv
+          ? `\n\nThe token in ${TOKEN_ENV} is invalid or expired (they last 7 days). Replace it, or unset it and run \`nortezh-mcp login\`.`
+          : '\n\nRe-login did not resolve it. Run `nortezh-mcp login` and check NORTEZH_API_URL.'
         : ''
 
     return {
@@ -83,7 +122,7 @@ async function main(): Promise<void> {
   const command = process.argv[2]
 
   if (command === 'login') {
-    const path = await login(requireApiUrl())
+    const path = await login(resolveApiUrl())
     console.error(`Saved credentials to ${path}`)
     return
   }
@@ -104,9 +143,11 @@ async function main(): Promise<void> {
         '  nortezh-mcp version',
         '',
         'Environment:',
-        `  ${API_URL_ENV}    required — API base URL including /user,`,
-        '                       e.g. http://localhost:18080/user',
-        '  NORTEZH_TOKEN      optional — a bearer token, used instead of the stored login',
+        `  ${API_URL_ENV}    API base URL including the /user prefix.`,
+        `                     Defaults to ${DEFAULT_API_URL}`,
+        '                     Local dev: http://localhost:18080/user',
+        `  ${TOKEN_ENV}      a bearer token, used instead of the stored login.`,
+        '                     Set it and the server never re-opens a browser.',
       ].join('\n'),
     )
     return

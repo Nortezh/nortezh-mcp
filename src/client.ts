@@ -12,13 +12,18 @@ export interface ClientOptions {
 
 export class NortezhClient {
   private readonly apiUrl: string
-  private readonly token: string
+  private token: string
   private readonly timeoutMs: number
 
   constructor(options: ClientOptions) {
     this.apiUrl = options.apiUrl.replace(/\/+$/, '')
     this.token = options.token
     this.timeoutMs = options.timeoutMs ?? 60_000
+  }
+
+  /** Swaps in a freshly obtained token after a re-login. */
+  setToken(token: string): void {
+    this.token = token
   }
 
   /**
