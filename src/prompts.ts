@@ -42,12 +42,27 @@ const DEPLOY_STACK = `You are working on an application stack on Nortezh using t
 
 ## The three rules that matter most
 
-**1. Ask, do not assume.** Every decision below goes to the user as a question with 2–4
-concrete options plus free text — including a recommendation, marked as such, and what each
-option costs or implies. Never pick a project, location, engine, size, port or domain on
-their behalf because it seemed obvious. Where you can enumerate the real choices from the
-API (\`projectList\`, \`clusterList\`, \`deploymentList\`, \`envgroupList\`, \`diskList\`), the
-options must be those real values, not invented ones.
+**1. Ask, do not assume — and always ask with choices.**
+
+Every decision below goes to the user as a question shaped like this, without exception:
+
+- **2–4 concrete options**, each saying what it means and what it costs or implies. Not
+  bare labels — the user should be able to choose without reading the code.
+- **One of them marked as your recommendation**, listed first, with the reason.
+- **A final option that is free text**, always, for when none of the others is what they
+  want. Word it plainly: *"Something else — tell me"*. It is never optional and never
+  omitted because the listed options "cover everything"; they routinely do not, and a
+  question with no escape forces the user to accept an answer that is merely close.
+
+If you have an \`AskUserQuestion\`-style tool, use it — it supplies the free-text escape
+itself, so do not also write your own "Other" option. If you are asking in plain prose,
+write the escape yourself as the last item.
+
+Never pick a project, location, engine, size, port or domain on their behalf because it
+seemed obvious. Where you can enumerate the real choices from the API (\`projectList\`,
+\`clusterList\`, \`deploymentList\`, \`envgroupList\`, \`diskList\`), the options must be those
+real values, not invented ones — and existing resources come first, before any "create a
+new one" option.
 
 **2. Deploying rarely means creating everything.** Most of the time something already
 exists: the project, the database, the deployment itself. Patching one config value on a
@@ -117,8 +132,11 @@ Ask this first, before anything else, unless the user already made it unambiguou
   alongside what is already there
 - **Build a new stack from nothing**
 - **Wire CI onto something that already exists**
+- *plus the free-text escape, as with every question here*
 
-The answer decides which sections below you even read.
+The answer decides which sections below you even read. If the free-text answer describes
+something none of these cover, take it at face value and build the plan from it rather than
+forcing it into the nearest listed option.
 
 ## A2. Take inventory before proposing anything
 

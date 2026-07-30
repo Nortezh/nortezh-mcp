@@ -50,7 +50,6 @@ test('the placeholder-first deployment sequence is spelled out', () => {
 test('it tells the model to ask with options rather than assume', () => {
   // The text wraps, so collapse whitespace before matching the phrase.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /2–4 concrete options plus free text/)
   assert.match(flat, /Never pick a project, location, engine, size, port or domain on their behalf/)
 })
 
@@ -164,4 +163,21 @@ test('it reads the codebase before interrogating the user', () => {
   assert.match(flat, /How many deployable units/)
   // And it must not treat its own reading as authoritative.
   assert.match(flat, /Do not proceed on your reading alone/)
+})
+
+test('every question must carry choices and a free-text escape', () => {
+  // Options without an escape force the user to accept an answer that is merely close.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /always ask with choices/)
+  assert.match(flat, /2–4 concrete options/)
+  assert.match(flat, /A final option that is free text\*\*, always/)
+  assert.match(flat, /never optional and never omitted/)
+  assert.match(flat, /Something else — tell me/)
+  // And it must not double up when the client already provides the escape.
+  assert.match(flat, /do not also write your own "Other" option/)
+})
+
+test('existing resources are offered ahead of creating new ones', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /existing resources come first, before any "create a new one" option/)
 })
