@@ -242,3 +242,28 @@ test('the long-form detail is parked behind "keep in reserve"', () => {
   const reserves = [...text.matchAll(/Keep in reserve/g)]
   assert.ok(reserves.length >= 2, 'expected the DNS and credential handoffs to both defer detail')
 })
+
+test('route target is documented as a deployment:// URI, not a bare name', () => {
+  // route.go:42-44 allows exactly one prefix and route.go:621 rejects anything else, so
+  // `target: "api"` fails with "target is invalid". Easy to get wrong from the field name.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /`target` is a URI, not a name/)
+  assert.match(flat, /deployment:\/\/<name>/)
+  assert.match(flat, /`path` must start with `\/`/)
+})
+
+test('it does not tell the model to create a project it cannot create', () => {
+  // project.go:162,183 — projectCreate requires a billingId UUID, and every billing route
+  // is excluded from the exposed tools, so there is no way to obtain one. Instructing the
+  // model to call it produces either a VALIDATE_ERROR or an invented UUID.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /You cannot create a project/)
+  assert.match(flat, /Do not call `projectCreate` and do not invent a UUID/)
+})
+
+test('metric ranges are enumerated, since the schema does not', () => {
+  // deployment.go:2055 — a closed set. "1d"/"7d"/"30d" look right and all fail.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /`1hagg`/)
+  assert.match(flat, /`30dagg`/)
+})

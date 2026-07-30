@@ -229,8 +229,11 @@ the existing resources as the **first** options in any question that follows.
 
 Ask only what the intent actually needs.
 
-- **Project** — from \`projectList\`. A new one is a billing and membership boundary, so
-  confirm before \`projectCreate\`.
+- **Project** — from \`projectList\`.
+  ⚠️ **You cannot create a project.** \`projectCreate\` requires a \`billingId\`, and no tool
+  here returns one — the billing routes are not exposed. If they need a new project, that is
+  a handoff: *"create the project in the Nortezh console, then tell me its slug."* Do not
+  call \`projectCreate\` and do not invent a UUID for it.
 - **Location** — \`clusterList\`. Keep the whole response; you need three things from it:
   - \`cpu\` and \`memory\` are the **selectable sizes for that cluster** (e.g. \`"0.5"\`, \`"1"\`,
     \`"512Mi"\`, \`"1Gi"\`). Resource requests must be one of these exact strings or the deploy
@@ -372,6 +375,13 @@ Field rules worth knowing before you send anything:
 - \`internal: true\` keeps it off the public ingress, and is required for
   \`InternalTCPService\`.
 
+Two more values the schemas do not spell out, so they are easy to guess wrong:
+
+- \`deploymentMetrics\`'s \`range\` accepts **only** \`1h\`, \`6h\`, \`12h\`, \`24h\`, \`1hagg\`,
+  \`6hagg\`, \`12hagg\`, \`24hagg\`, \`7dagg\`, \`30dagg\`. Anything else — \`1d\`, \`7d\`, \`30d\` —
+  fails validation.
+- \`routeCreate\`'s \`target\` is a URI: see B4.
+
 On \`"failed"\`, read \`logUrl\` and \`statusUrl\` from \`deploymentGet\` and report them.
 ⚠️ \`statusUrl\` is a 10-minute signed URL — fetch a fresh one, never reuse an old one.
 
@@ -434,9 +444,13 @@ something goes wrong.
 - Other providers need the same records; only the UI differs. Ask about a provider-specific
   quirk rather than guessing at one.
 
-**3. \`routeCreate\`** maps \`domain\` + \`path\` to the deployment (\`target\`).
-⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
-domain nobody verified.
+**3. \`routeCreate\`** maps \`domain\` + \`path\` onto a deployment.
+
+- ⚠️ **\`target\` is a URI, not a name.** It must be \`deployment://<name>\` — that prefix is
+  the only accepted form, and a bare \`"api"\` fails validation with "target is invalid".
+- \`path\` must start with \`/\`. Use \`/\` for the whole site.
+- ⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
+  domain nobody verified.
 
 **4. Re-check \`domainGet\`** until it verifies. If it stays unverified for more than a few
 minutes, the usual causes in order: the records were added to the wrong zone, Cloudflare's
