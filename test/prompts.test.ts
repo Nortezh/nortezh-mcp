@@ -157,10 +157,11 @@ test('it reads the codebase before interrogating the user', () => {
   // The repo already states the topology, ports, dependencies and env vars. Asking a user
   // to recite their own architecture is both slower and less accurate than deriving it.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /Understand the project before you touch Nortezh/)
+  assert.match(flat, /Understand the project, its services, and their configuration/)
+  assert.match(flat, /This is the step that matters/)
   assert.match(flat, /docker-compose\.yml/)
   assert.match(flat, /\.env\.example/)
-  assert.match(flat, /How many deployable units/)
+  assert.match(flat, /Build a service inventory/)
   // And it must not treat its own reading as authoritative.
   assert.match(flat, /Do not proceed on your reading alone/)
 })
@@ -180,4 +181,22 @@ test('every question must carry choices and a free-text escape', () => {
 test('existing resources are offered ahead of creating new ones', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /existing resources come first, before any "create a new one" option/)
+})
+
+test('a project is described as holding many deployments and databases', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /A Nortezh \*\*project\*\* is not one application/)
+  assert.match(flat, /one project with three deployments/)
+  assert.match(flat, /unique \*\*within\*\* the project, not globally/)
+})
+
+test('per-service configuration is treated as its own step', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Every environment variable it reads/)
+  assert.match(flat, /Which of those are secrets/)
+  assert.match(flat, /shared across services and which are per-service/)
+  // The compose-name translation is the classic cause of a stack that deploys but cannot
+  // talk to itself.
+  assert.match(flat, /Addresses change when they leave compose/)
+  assert.match(flat, /internalUrl/)
 })

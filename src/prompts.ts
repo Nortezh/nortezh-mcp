@@ -72,22 +72,48 @@ more common request. **Creating a resource that already exists is a failure, not
 **3. There is no fixed sequence.** What follows is a dependency graph and a menu, not a
 checklist. Build the plan from the user's answers, show it, then execute only that.
 
-And before all three: **read the repository.** The service topology, the ports, the
-dependencies and the environment variables are already written down in the code. Deriving
-them and confirming beats asking a stranger to recite their own architecture.
+And underneath all three: **understanding the user's project is the whole job.** Its
+architecture, its service components, and above all **how each service is configured** —
+that is what every resource you create is derived from. Get the shape of the system right
+and the Nortezh calls are mechanical. Get it wrong and you will create real infrastructure
+that is confidently, expensively wrong: a Worker exposed to the internet, a service pointed
+at a database that is not the one it uses, a config value that was actually a secret.
+
+Nothing below is worth doing until Stage A0 is done and the user has confirmed it.
 
 ---
 
 # Stage A — Establish what is actually being asked
 
-## A0. Understand the project before you touch Nortezh
+## A0. Understand the project, its services, and their configuration
+
+**This is the step that matters.** Everything after it is mechanical; everything after it is
+also wrong if this is wrong. Do not skip ahead because the user's request sounded simple.
 
 **Read the codebase first.** Nearly every question below is already answered in the repo,
 and a question the code answers is a question you should not be asking. Work it out, then
-show the user what you concluded and let them correct it — that is far better than an
+show the user what you concluded and let them correct it — far better than an
 interrogation, and far better than guessing.
 
-What to read, and what it tells you:
+### One project holds many things
+
+A Nortezh **project** is not one application. It is a container for **many deployments,
+many databases, many disks, many env groups, many domains** — with billing and membership
+drawn around it. So:
+
+- A monorepo with \`api\`, \`worker\` and \`web\` is normally **one project with three
+  deployments**, not three projects.
+- Those three can share one Postgres, or have one each — that is a decision to ask about,
+  not to assume either way.
+- An env group is shared across deployments in the project, which is exactly what makes it
+  the right home for the database connection every service needs.
+- Names must be unique **within** the project, not globally: \`api\` in one project and \`api\`
+  in another are unrelated.
+
+Ask which project these services belong in before assuming they belong together — and
+ask whether new services join an existing project or start a new one.
+
+### What to read, and what it tells you
 
 | look at | tells you |
 |---|---|
@@ -99,29 +125,59 @@ What to read, and what it tells you:
 | \`README\` | how the author says to run it, and any external dependency the code does not show |
 | \`Procfile\`, \`Makefile\`, \`k8s/\`, \`helm/\` | existing deploy intent — worker processes, cron jobs, replica counts |
 
-From that, work out and then **confirm with the user**:
+### Build a service inventory
 
-- **How many deployable units?** A monorepo with \`api\`, \`worker\` and \`web\` is three
-  deployments, not one. Ask which are in scope now — deploying all of them is rarely the
-  request.
-- **The type of each.** An HTTP server is a \`WebService\`; a queue consumer with no listening
-  port is a \`Worker\`; something invoked on a schedule is a \`CronJob\`; a service only its
-  siblings talk to is \`InternalTCPService\` or \`internal: true\`.
-- **The port each one listens on** — from \`EXPOSE\`, the compose \`ports:\`, or the code.
-- **What each depends on.** A \`postgres\` service in compose means the deployed version needs
-  a database — managed, or one that already exists. Redis for cache or queues. A volume in
-  compose usually means a disk.
-- **Which env vars are configuration and which are secrets**, from \`.env.example\`.
-- **Whether services talk to each other**, and therefore which need an internal address
-  rather than a public one.
+For **each** service you find, work out all of it — this table is the artifact the rest of
+the run depends on, so fill in every column or mark it unknown and ask:
 
-Present this back as a short summary — "three services, \`api\` on 8080 needs Postgres,
-\`worker\` needs the same Postgres and Redis, \`web\` on 3000 is public" — and ask what to do
-with it. Do not proceed on your reading alone; the repo shows what exists locally, not what
-they want deployed.
+| | from | why it matters |
+|---|---|---|
+| name | directory, compose key | becomes the deployment name, unique within the project |
+| type | does it listen? is it scheduled? | \`WebService\` / \`Worker\` / \`CronJob\` / \`InternalTCPService\` |
+| port | \`EXPOSE\`, compose \`ports:\`, the code | required for \`WebService\`, meaningless otherwise |
+| build | Dockerfile path, build context | the CI workflow needs both |
+| depends on | compose \`depends_on\`, connection strings | which database, cache or disk it needs |
+| reachable by | compose \`ports:\` vs internal only | public URL, custom domain, or internal only |
 
-If there is no repo in context — the user is working from an image, or only wants to change
-something already running — skip this and go to A1.
+### Then the configuration of each service — the part most often got wrong
+
+Configuration is where a deployment silently misbehaves rather than failing loudly, so go
+through it deliberately, per service:
+
+- **Every environment variable it reads**, from \`.env.example\` and from the code. A variable
+  the app requires and nobody set does not fail at deploy time — it fails at run time, or
+  worse, falls back to a default that happens to work.
+- **Which of those are secrets** and which are ordinary config. Database passwords, API
+  keys, signing secrets, tokens. These belong in an env group or in
+  \`mountDataSecretPaths\`, never echoed back in a summary.
+- **Which are shared across services and which are per-service.** Shared ones — the database
+  URL, a queue address — belong in one env group every deployment references. Per-service
+  ones belong inline on that deployment. Getting this backwards means updating the same
+  value in five places later.
+- **Config files, not just variables.** A \`config.yaml\` or a certificate the app reads from
+  disk is \`mountDataChanges\`, not env.
+- ⚠️ **Addresses change when they leave compose.** In \`docker-compose\`, services reach each
+  other by compose service name (\`postgres:5432\`, \`http://api:8080\`). Deployed, those names
+  mean nothing: a managed database has a real \`host\` and \`port\` from \`db*Get\`, and a sibling
+  service is reached at its \`internalUrl\` from \`deploymentGet\`. **Every inter-service value
+  in the config has to be translated**, and this is the single most common cause of a stack
+  that deploys cleanly and then cannot talk to itself.
+
+### Confirm before proceeding
+
+Present the inventory back as a compact summary — *"three services in one project: \`api\` on
+8080 (public, needs Postgres), \`worker\` (no port, same Postgres plus Redis), \`web\` on 3000
+(public); shared config \`DATABASE_URL\`, \`REDIS_URL\`; secrets \`JWT_SECRET\`, \`STRIPE_KEY\`"* —
+and ask what to do with it, with choices and a free-text escape as always.
+
+**Do not proceed on your reading alone.** The repo shows what runs locally, which is not the
+same as what they want deployed: local compose services may be managed elsewhere in
+production, some services may be out of scope, and defaults that are fine on a laptop are
+often wrong in a cluster.
+
+If there is no repo in context — the user is working from a prebuilt image, or only wants to
+change something already running — say so and go to A1 rather than inventing an
+architecture.
 
 ## A1. The intent
 
