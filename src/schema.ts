@@ -61,7 +61,9 @@ export function convert(node: unknown): unknown {
  * Collects every definition reachable from `name` into `into`, converted.
  *
  * Each tool then carries only the types it actually uses instead of all 277 in the spec.
- * Cycle-guarded — several definitions refer back into themselves.
+ * Cycle-guarded, so a definition that refers back into itself terminates rather than
+ * recursing forever. (No definition in the current spec actually does — the guard is for
+ * the one that eventually will.)
  *
  * Throws on a dangling ref rather than emitting a schema with an unresolvable `$ref`,
  * which a client would only discover at call time.
@@ -97,6 +99,17 @@ export function collectRefs(
   }
 }
 
+/** True when `#/$defs/<name>` appears anywhere in the inlined root or the other defs. */
+function isReferenced(name: string, root: JsonSchema, defs: Map<string, JsonSchema>): boolean {
+  const needle = `"#/$defs/${name}"`
+  if (JSON.stringify(root.properties ?? {}).includes(needle)) return true
+  for (const [key, value] of defs) {
+    if (key === name) continue
+    if (JSON.stringify(value).includes(needle)) return true
+  }
+  return false
+}
+
 /**
  * Builds a tool's `inputSchema` from the definition named by its request body.
  *
@@ -113,7 +126,12 @@ export function buildInputSchema(
   collectRefs(rootName, definitions, defs)
 
   const root = (rootName === null ? {} : (defs.get(rootName) ?? {})) as JsonSchema
-  if (rootName !== null) defs.delete(rootName)
+
+  // The root's properties are inlined above, so its entry in $defs is normally redundant.
+  // But if anything reachable from it refers BACK to the root, dropping the entry leaves a
+  // `#/$defs/<Root>` with nothing to resolve to — a schema that looks fine and breaks at
+  // validation time. Keep it whenever it is actually referenced.
+  if (rootName !== null && !isReferenced(rootName, root, defs)) defs.delete(rootName)
 
   const required = root.required
   return {

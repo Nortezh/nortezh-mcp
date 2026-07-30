@@ -295,3 +295,16 @@ test('absent envGroups and empty envGroups are distinguished', () => {
   assert.match(flat, /`envGroups` absent means \*\*leave the current links alone\*\*/)
   assert.match(flat, /`\[\]` means \*\*unlink every group\*\*/)
 })
+
+test('$-sequences in argument values cannot splice the template', () => {
+  // String.replace interprets $&, $`, $' and $n in a replacement STRING. A project name
+  // containing one re-injected the {{GIVEN}} token, or spliced 83 characters of the
+  // template's own prefix into the rendered prompt.
+  const amp = deployStack!.render({ project: 'acme$&x' })
+  assert.equal(amp.includes('{{GIVEN}}'), false)
+  assert.match(amp, /- project: acme\$&x/)
+
+  const tick = deployStack!.render({ project: "acme$`END" })
+  assert.match(tick, /- project: acme\$`END/)
+  assert.equal(tick.length, deployStack!.render({ project: 'acme$`END' }).length)
+})

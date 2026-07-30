@@ -56,7 +56,42 @@ test('a non-JSON body does not throw', () => {
   assert.equal(outcome.ok === false && outcome.code, 'INVALID_RESPONSE')
 })
 
-test('an error envelope with no code falls back to the status', () => {
+test('an error envelope with no code gets the uncoded sentinel', () => {
   const outcome = interpret(400, JSON.stringify({ ok: false }))
-  assert.equal(outcome.ok === false && outcome.code, 'HTTP_400')
+  assert.equal(outcome.ok === false && outcome.code, 'UNCODED_ERROR')
+})
+
+test('a JSON null body does not crash', () => {
+  // JSON.parse("null") is null and typeof null is "object", so a naive guard misses it.
+  // client.ts calls interpret inside its try block, so the throw surfaced as
+  // NETWORK_ERROR — a response that arrived fine, reported as a connectivity problem.
+  const outcome = interpret(200, 'null')
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.ok === false && outcome.code, 'INVALID_RESPONSE')
+})
+
+test('non-object JSON bodies are rejected, not misread as envelopes', () => {
+  for (const body of ['null', '[]', '"x"', '123', 'true']) {
+    const outcome = interpret(200, body)
+    assert.equal(outcome.ok, false, body)
+    assert.equal(outcome.ok === false && outcome.code, 'INVALID_RESPONSE', body)
+  }
+})
+
+test('an error with a message but no code gets an honest sentinel', () => {
+  // arpc's Error.Code is omitempty and WrapError produces code-less errors. Reporting
+  // "HTTP_200" handed the model a code that exists nowhere in the API, while every tool
+  // description tells it to react to specific codes.
+  const outcome = interpret(200, '{"ok":false,"error":{"message":"json: cannot unmarshal"}}')
+  assert.equal(outcome.ok === false && outcome.code, 'UNCODED_ERROR')
+  assert.equal(outcome.ok === false && outcome.message, 'json: cannot unmarshal')
+})
+
+test('a 500 with a body reports the body instead of claiming there was none', () => {
+  const withBody = interpret(500, '<html>bad gateway</html>')
+  assert.equal(withBody.ok === false && withBody.code, 'SERVER_ERROR')
+  assert.match(withBody.ok === false ? withBody.message : '', /bad gateway/)
+
+  const empty = interpret(500, '')
+  assert.match(empty.ok === false ? empty.message : '', /empty body/)
 })

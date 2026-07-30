@@ -40,19 +40,32 @@ async function runServer(): Promise<void> {
   // tool calls share one login attempt, so an expiry does not open a browser tab per
   // in-flight request.
   let reloginInFlight: Promise<boolean> | null = null
+  // Bumped on every successful login. A request that started before a refresh must not
+  // trigger a second one when its own stale-token 401 finally lands.
+  let tokenGeneration = 0
+  // A login the user simply ignores takes the full 5 minutes to time out. Without this,
+  // the very next tool call opens another browser window and blocks for another 5.
+  let quietUntil = 0
 
-  async function relogin(): Promise<boolean> {
+  const RELOGIN_BACKOFF_MS = 2 * 60 * 1000
+
+  async function relogin(generationAtCall: number): Promise<boolean> {
     if (fromEnv) return false
+    // Someone already refreshed while this request was in flight — just retry with it.
+    if (generationAtCall !== tokenGeneration) return true
     if (reloginInFlight !== null) return await reloginInFlight
+    if (Date.now() < quietUntil) return false
 
     reloginInFlight = (async () => {
       try {
         console.error('Token rejected — reopening the browser to sign in again.')
         await login(apiUrl)
         client.setToken(resolveAuth().token)
+        tokenGeneration += 1
         return true
       } catch (error) {
         console.error(`Re-login failed: ${error instanceof Error ? error.message : String(error)}`)
+        quietUntil = Date.now() + RELOGIN_BACKOFF_MS
         return false
       } finally {
         reloginInFlight = null
@@ -119,17 +132,20 @@ async function runServer(): Promise<void> {
     }
 
     const args = request.params.arguments ?? {}
+    const generationAtCall = tokenGeneration
     let outcome = await client.call(tool.route, args)
 
     // Retried at most once: if the fresh token is rejected too, the problem is not expiry.
-    if (!outcome.ok && outcome.code === UNAUTHORIZED && (await relogin())) {
+    if (!outcome.ok && outcome.code === UNAUTHORIZED && (await relogin(generationAtCall))) {
       outcome = await client.call(tool.route, args)
     }
 
     if (outcome.ok) {
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(outcome.result, null, 2) }],
-      }
+      // JSON.stringify(undefined) is undefined, not a string — that would serialize as a
+      // content block with no `text`, which the MCP schema rejects, so an empty success
+      // would reach the user as a protocol error.
+      const text = outcome.result === undefined ? 'null' : JSON.stringify(outcome.result, null, 2)
+      return { content: [{ type: 'text' as const, text }] }
     }
 
     // A domain error arrives as HTTP 200; reporting it as an MCP tool error is what stops

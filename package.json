@@ -20,7 +20,8 @@
     "build": "npm run generate && tsc",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "test": "tsx --test test/*.test.ts",
-    "check": "npm run generate && npm run typecheck && npm test"
+    "check": "npm run generate && git diff --exit-code src/generated/tools.ts && npm run typecheck && npm test",
+    "check:nogit": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0"

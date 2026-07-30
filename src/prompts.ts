@@ -663,6 +663,10 @@ export const PROMPTS: PromptSpec[] = [
       { name: 'domain', description: 'Custom domain to attach, if any' },
       { name: 'repo', description: 'GitHub repo (owner/name) to wire continuous deploys for' },
     ],
-    render: (args) => DEPLOY_STACK.replace('{{GIVEN}}', given(args)),
+    // A replacer FUNCTION, not a replacement string: String.replace interprets `$&`,
+    // "$`", `$'` and `$n` in the replacement, so a user-supplied value containing one of
+    // those would splice pieces of the template back into the output — including the
+    // {{GIVEN}} token itself.
+    render: (args) => DEPLOY_STACK.replace('{{GIVEN}}', () => given(args)),
   },
 ]

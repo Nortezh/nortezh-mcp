@@ -28,6 +28,12 @@ interface RawEnvelope {
 /** Domain code the API returns for an absent, invalid, or expired credential. */
 export const UNAUTHORIZED = 'UNAUTHORIZED'
 
+/** Not an API code: an error that arrived with a message but no code of its own. */
+export const UNCODED_ERROR = 'UNCODED_ERROR'
+
+/** Not an API code: an HTTP 500, which carries no useful domain error. */
+export const SERVER_ERROR = 'SERVER_ERROR'
+
 /**
  * Maps one HTTP response into a tool result or a tool error.
  *
@@ -39,19 +45,24 @@ export const UNAUTHORIZED = 'UNAUTHORIZED'
  *                           there is nothing to parse and nothing to report but the fact
  */
 export function interpret(status: number, bodyText: string): Interpreted {
-  if (status === 500) {
-    return {
-      ok: false,
-      code: 'SERVER_ERROR',
-      message: 'The Nortezh API returned HTTP 500 with no body. Check the API server logs.',
-      items: [],
-    }
-  }
-
-  let parsed: RawEnvelope
+  let parsed: unknown
   try {
-    parsed = JSON.parse(bodyText) as RawEnvelope
+    parsed = JSON.parse(bodyText)
   } catch {
+    // A 500 from this backend carries {"ok":false,"error":{}} — but a 500 from anything
+    // else in the path (ingress, a CDN) carries HTML or nothing. Say which we got rather
+    // than asserting one and sending the reader to the wrong logs.
+    if (status === 500) {
+      return {
+        ok: false,
+        code: SERVER_ERROR,
+        message:
+          bodyText.trim() === ''
+            ? 'The API returned HTTP 500 with an empty body. Check the API server logs.'
+            : `The API returned HTTP 500: ${truncate(bodyText)}`,
+        items: [],
+      }
+    }
     return {
       ok: false,
       code: 'INVALID_RESPONSE',
@@ -60,14 +71,32 @@ export function interpret(status: number, bodyText: string): Interpreted {
     }
   }
 
-  if (parsed.ok === true) return { ok: true, result: parsed.result }
+  // JSON.parse("null") yields null, and null is typeof "object" — so this guard has to
+  // test both. Without it, reading .ok off null throws, and because client.ts calls this
+  // inside its try block the crash surfaces as NETWORK_ERROR: a response that arrived
+  // perfectly well, reported as a connectivity problem.
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      ok: false,
+      code: 'INVALID_RESPONSE',
+      message: `HTTP ${status}: expected a JSON object, got ${truncate(bodyText)}`,
+      items: [],
+    }
+  }
 
-  const error = parsed.error ?? {}
-  const code = typeof error.code === 'string' && error.code !== '' ? error.code : `HTTP_${status}`
+  const envelope = parsed as RawEnvelope
+  if (envelope.ok === true) return { ok: true, result: envelope.result }
+
+  const error = envelope.error ?? {}
+  // arpc's Error.Code is `omitempty`, and NewError/WrapError produce code-less errors — a
+  // body that fails to bind comes back with a message and no code. Report that as its own
+  // sentinel: inventing "HTTP_200" hands the model a code that exists nowhere in the API,
+  // when every tool description tells it to react to specific codes.
+  const code = typeof error.code === 'string' && error.code !== '' ? error.code : UNCODED_ERROR
   const message =
     typeof error.message === 'string' && error.message !== ''
       ? error.message
-      : `HTTP ${status} with no error message`
+      : `HTTP ${status} with no error code or message`
   const items = Array.isArray(error.items) ? error.items.filter((i): i is string => typeof i === 'string') : []
 
   return { ok: false, code, message, items }
