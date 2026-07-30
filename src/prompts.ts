@@ -102,9 +102,15 @@ at a database that is not the one it uses, a config value that was actually a se
 
 Nothing below is worth doing until Stage A0 is done and the user has confirmed it.
 
-If at any point you are unsure what a resource actually *is* — what it depends on, whether
-it can still be changed, how you would know it is ready — read the **\`resources\`** prompt on
-this same server. It is the model; this is the procedure.
+---
+
+{{RESOURCE_MODEL}}
+
+---
+
+That was the **model** — what each thing is. The rest of this is the **procedure** — what to
+do about it. When the two seem to disagree, the model is the one that was checked against
+the API source.
 
 ---
 
@@ -760,8 +766,10 @@ groups and domains.
 - **Ready:** immediately. Synchronous.
 - **Mutable:** \`projectEdit\` changes the display name. The **slug is the identity** every
   other call uses.
-- **Members:** \`projectAddMember\` takes an email. ⚠️ It accepts a \`role\` but does not
-  persist or enforce it — every member is equivalent except the single owner.
+- **Members:** \`projectListMember\` reads them. Adding and removing members is **not
+  exposed** here — that is a console handoff. ⚠️ The underlying API accepts a \`role\` but
+  does not persist or enforce it: every member is equivalent except the single owner, so
+  "add them as read-only" is not a thing you can promise.
 
 ## Cluster (a "location")
 
@@ -928,11 +936,19 @@ export const PROMPTS: PromptSpec[] = [
       { name: 'domain', description: 'Custom domain to attach, if any' },
       { name: 'repo', description: 'GitHub repo (owner/name) to wire continuous deploys for' },
     ],
-    // A replacer FUNCTION, not a replacement string: String.replace interprets `$&`,
-    // "$`", `$'` and `$n` in the replacement, so a user-supplied value containing one of
-    // those would splice pieces of the template back into the output — including the
-    // {{GIVEN}} token itself.
-    render: (args) => DEPLOY_STACK.replace('{{GIVEN}}', () => given(args)),
+    // The resource model is INLINED, not referenced. An MCP prompt cannot fetch another
+    // prompt — prompts are user-invoked slash commands and the model has no prompts/get —
+    // so "read the resources prompt if unsure" was advice it could never act on. Composing
+    // the one constant into both surfaces keeps a single source and no drift.
+    //
+    // Both use a replacer FUNCTION, not a replacement string: String.replace interprets
+    // `$&`, "$`", `$'` and `$n` in the replacement, so a value containing one of those
+    // would splice pieces of the template back into the output.
+    render: (args) =>
+      DEPLOY_STACK.replace('{{GIVEN}}', () => given(args)).replace(
+        '{{RESOURCE_MODEL}}',
+        () => RESOURCE_MODEL,
+      ),
   },
   {
     name: 'resources',

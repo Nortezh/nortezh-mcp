@@ -55,8 +55,9 @@ test('it tells the model to ask with options rather than assume', () => {
 
 test('the placeholder is always substituted', () => {
   for (const prompt of PROMPTS) {
-    assert.equal(prompt.render({}).includes('{{GIVEN}}'), false, prompt.name)
-    assert.equal(prompt.render({ project: 'x' }).includes('{{GIVEN}}'), false, prompt.name)
+    for (const rendered of [prompt.render({}), prompt.render({ project: 'x' })]) {
+      assert.equal(/\{\{[A-Z_]+\}\}/.test(rendered), false, `${prompt.name} left a placeholder`)
+    }
   }
 })
 
@@ -64,7 +65,7 @@ test('every tool the prompt instructs the model to call actually exists', () => 
   // The prompt names tools in prose, so a rename or an allowlist change could leave it
   // telling the model to call something that is not there.
   const names = new Set(TOOLS.map((tool) => tool.name))
-  const text = deployStack!.render({})
+  const text = PROMPTS.map((prompt) => prompt.render({})).join('\n')
 
   const referenced = [...text.matchAll(/`([a-z][A-Za-z]+)`/g)]
     .map((match) => match[1] as string)
@@ -398,6 +399,10 @@ test('the resource model does not contradict deploy-stack on the sharp facts', (
   assert.match(model, /no exposed tool returns one/)
 })
 
-test('deploy-stack points at the resource model', () => {
-  assert.match(deployStack!.render({}), /read the \*\*`resources`\*\* prompt/)
+test('deploy-stack INLINES the resource model rather than pointing at it', () => {
+  // An MCP prompt cannot fetch another prompt: prompts are user-invoked slash commands and
+  // the model has no prompts/get. A pointer would be advice it could never act on.
+  const text = deployStack!.render({})
+  assert.ok(text.includes(resources!.render({})), 'the model is not embedded verbatim')
+  assert.equal(text.includes('{{RESOURCE_MODEL}}'), false)
 })

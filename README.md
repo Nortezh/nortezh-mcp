@@ -86,6 +86,10 @@ needs, and minting the service-account key the CI workflow authenticates with.
 in both directions, how you tell it is ready — which differs for all four of deployment,
 database, disk and route — and what can still be changed after it exists.
 
+`deploy-stack` **embeds `resources` verbatim**, so it is self-contained; run `resources` on
+its own when you want the model without the procedure. (A prompt cannot fetch another
+prompt, so a cross-reference would be advice the model could not act on.)
+
 ## Tools
 
 56 of the API's 98 routes — 30 read-only, 11 destructive, 15 plain writes.
