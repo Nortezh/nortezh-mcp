@@ -169,8 +169,9 @@ through it deliberately, per service:
   the app requires and nobody set does not fail at deploy time — it fails at run time, or
   worse, falls back to a default that happens to work.
 - **Which of those are secrets** and which are ordinary config. Database passwords, API
-  keys, signing secrets, tokens. These belong in an env group or in
-  \`mountDataSecretPaths\`, never echoed back in a summary.
+  keys, signing secrets, tokens. ⚠️ These do **not** belong in an env group — those are
+  plain text and never masked. They go in \`mountData\` with their paths in
+  \`mountDataSecretPaths\` (see B2). Never echo one back in a summary.
 - **Which are shared across services and which are per-service.** Shared ones — the database
   URL, a queue address — belong in one env group every deployment references. Per-service
   ones belong inline on that deployment. Getting this backwards means updating the same
@@ -300,8 +301,9 @@ The same applies to a disk that already exists — just reference it by name.
 Creating a new one:
 
 - \`dbPostgresCreate\` / \`dbRedisCreate\` / \`dbMongoCreate\`. **You supply the password**; it is
-  not generated. Generate a strong one, show it to the user **once**, and put it straight
-  into the env group.
+  not generated. Generate a strong one, show it to the user **once**, and carry it into the
+  configuration as a **secret** — \`mountData\` + \`mountDataSecretPaths\`, not an env group
+  (see B2 for why).
 - \`diskCreate\` for persistent storage. A disk belongs to one location and is mounted by
   exactly the deployment that references it.
 - Wait for each per the table above. For a database the connection details (\`host\`, \`port\`)
@@ -312,9 +314,29 @@ Creating a new one:
 
 ## B2. Configuration
 
+⚠️ **Env groups are plain text and are never masked.** The API says so itself: *"do not put
+real secrets in an env group."* \`envgroupGet\` returns every value in full to anyone who can
+read the project. Secrets go in \`mountData\` with their paths listed in
+\`mountDataSecretPaths\`, which is the only thing here that censors — \`deploymentGet\` returns
+those as \`***\`. Inline \`env\` on the deployment is not masked either. So:
+
+| | where it goes |
+|---|---|
+| ordinary shared config | env group |
+| ordinary per-service config | inline \`env\` on the deployment |
+| **secrets** — passwords, API keys, tokens | \`mountData\` + \`mountDataSecretPaths\` |
+
+If the user would rather keep a secret in an env group anyway, that is their call — say
+once that it will be readable in full, and move on.
+
 - \`envgroupCreate\` with a \`data\` object, then reference it by name in the deployment's
-  \`envGroups\`. To change an existing group, \`envgroupUpdate\` — do not create a second one.
-  Groups merge **in the order given**, later overriding earlier, and the deployment's own
+  \`envGroups\`. \`name\` is lowercase, 3–27 characters, and **immutable** — there is no
+  rename, so pick it deliberately.
+- ⚠️ **\`envgroupUpdate\` REPLACES the whole map.** It is not a merge: any key you leave out
+  is deleted, and omitting \`data\` entirely empties the group. To change one value, read the
+  group with \`envgroupGet\` first, apply your change to that map, and send the whole thing
+  back. This is the same trap as \`env\` on a deployment, one level up.
+- Groups merge **in the order given**, later overriding earlier, and the deployment's own
   \`env\` / \`addEnv\` / \`removeEnv\` is overlaid last and always wins.
 - ⚠️ The merge is **baked into the revision at deploy time.** Editing a group afterwards does
   **not** change a running deployment — it needs another \`deploymentDeploy\` to pick the new

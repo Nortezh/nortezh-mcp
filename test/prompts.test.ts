@@ -267,3 +267,23 @@ test('metric ranges are enumerated, since the schema does not', () => {
   assert.match(flat, /`1hagg`/)
   assert.match(flat, /`30dagg`/)
 })
+
+test('secrets are kept out of env groups', () => {
+  // envgroup.go:151-155 — "stored and returned as PLAIN TEXT (never masked) — do not put
+  // real secrets in an env group". Only mountDataSecretPaths censors (deployment.go:911).
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Env groups are plain text and are never masked/)
+  assert.match(flat, /do not put real secrets in an env group/)
+  assert.match(flat, /mountData` \+ `mountDataSecretPaths`/)
+  // And nothing may still be routing a password into an env group.
+  assert.equal(/put it straight into the env group/.test(flat), false)
+})
+
+test('envgroupUpdate is described as a wholesale replace', () => {
+  // envgroup.go:141-143 — Data replaces the whole map; any key left out is removed, and a
+  // nil data empties the group outright (Valid() substitutes an empty map).
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /`envgroupUpdate` REPLACES the whole map/)
+  assert.match(flat, /omitting `data` entirely empties the group/)
+  assert.match(flat, /read the group with `envgroupGet` first/)
+})
