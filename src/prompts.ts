@@ -239,11 +239,17 @@ Ask only what the intent actually needs.
   - \`cpu\` and \`memory\` are the **selectable sizes for that cluster** (e.g. \`"0.5"\`, \`"1"\`,
     \`"512Mi"\`, \`"1Gi"\`). Resource requests must be one of these exact strings or the deploy
     fails with \`DEPLOYMENT_INVALID_CPU\` / \`DEPLOYMENT_INVALID_MEMORY\`.
-  - \`features\` says what the cluster supports. **A key is present when supported and absent
-    when not** — \`"database": {}\` means managed databases work here; no \`database\` key means
-    they do not. Same for \`disk\` and \`web-google-auth\`. Check this before offering either,
-    rather than offering it and hitting \`DATABASE_CLUSTER_NOT_SUPPORTED\`.
-  - \`isTrial\` — trial billing cannot use every cluster and cannot create a CDN domain.
+  - \`features\` advertises what the cluster is capable of, as **present-when-supported**
+    keys (\`"database": {}\` means yes, an absent \`database\` key means no). ⚠️ It is a hint,
+    **not the gate**: managed databases are actually gated on a different table, and disks
+    on the **billing account's** feature flags, so \`db*Create\` can still fail with
+    \`DATABASE_CLUSTER_NOT_SUPPORTED\` and \`diskCreate\` with \`ACCESS_DENIED\` on a cluster
+    whose \`features\` looked fine. Use it to avoid obviously wrong offers; be ready for the
+    call to fail anyway, and report that as a platform setting rather than retrying.
+  - ⚠️ \`isTrial\` is a property of the **cluster** — "this cluster accepts trial workloads" —
+    not a statement about the caller's billing account. It does not tell you whether the
+    user is on trial. (If they are, \`clusterList\` already filters to clusters that accept
+    them.)
 - **Workload type**, for a new deployment — \`WebService\` (HTTP, gets a URL), \`Worker\` (no
   ingress), \`CronJob\` (needs a crontab \`schedule\`), \`InternalTCPService\` (cluster-internal).
 - **Data dependencies** — offer *nothing* as a real first option when it is plausible:
@@ -280,13 +286,18 @@ Get this wrong and you will either move on too early or wait forever.
 | deployment | \`deploymentGet\` | \`actionStatus\` is the **string** \`"success"\` | \`"failed"\` |
 | database | \`dbPostgresGet\` / \`dbRedisGet\` / \`dbMongoGet\` | \`actionStatus\` is the **number \`2\`**, and \`host\` is non-empty | **never** — there is no failure value |
 | disk | \`diskGet\` | \`actionStatus\` is the **number \`2\`** | **never** |
+| route | \`routeGet\` | \`status\` is the **number \`2\`** | **never** |
+| domain, non-CDN | — | **immediately**, at create | — |
+| domain, CDN | \`domainGet\` | \`status\` reports success | — |
 
-Database and disk \`actionStatus\` are bare integers — \`1\` = pending, \`2\` = success — and
-have **no failed state at all**. So a database that never provisions stays at \`1\` forever.
-Give those a bounded wait (a few minutes), then stop and tell the user rather than looping.
+Only the deployment reports a **string**, and only the deployment can report failure.
+Database, disk and route \`actionStatus\`/\`status\` are bare integers — \`1\` = pending,
+\`2\` = success — with **no failed value at all**, so something that never provisions sits at
+\`1\` forever. Give those a bounded wait (a few minutes), then stop and tell the user rather
+than looping.
 
-Deployment \`actionStatus\` is a *string* and does have \`"failed"\`. Never compare the two
-kinds the same way.
+A **non-CDN domain is not asynchronous at all**: it is stored as success the moment it is
+created. There is nothing to poll and nothing to wait for. See B4.
 
 Poll every few seconds, not faster.
 
@@ -294,9 +305,17 @@ Poll every few seconds, not faster.
 ## B1. Data stores — reuse first, create only if there is nothing to reuse
 
 **Reusing one is the normal case.** If A2 turned up a database the user wants to use, there
-is nothing to create here: \`dbPostgresGet\` (etc) gives you \`host\`, \`port\`, \`user\`,
-\`database\` and \`password\`, and those go into the configuration in B2. Skip to B2.
-The same applies to a disk that already exists — just reference it by name.
+is nothing to create here — read its connection details and go to B2. ⚠️ The three engines
+return **different fields**:
+
+| | returns |
+|---|---|
+| \`dbPostgresGet\` | \`host\`, \`port\`, \`user\`, \`database\`, \`password\` |
+| \`dbMongoGet\` | \`host\`, \`port\`, \`user\`, \`password\` — **no \`database\`** |
+| \`dbRedisGet\` | \`host\`, \`port\`, \`password\` — **no \`user\`, no \`database\`** |
+
+Do not build a connection string from a field the engine does not return. The same reuse
+logic applies to a disk that already exists — just reference it by name.
 
 Creating a new one:
 
@@ -304,8 +323,13 @@ Creating a new one:
   not generated. Generate a strong one, show it to the user **once**, and carry it into the
   configuration as a **secret** — \`mountData\` + \`mountDataSecretPaths\`, not an env group
   (see B2 for why).
-- \`diskCreate\` for persistent storage. A disk belongs to one location and is mounted by
-  exactly the deployment that references it.
+  ⚠️ \`cpu\`, \`memory\` and \`storageSize\` are **required and bounded**: cpu **0.5–4** cores,
+  memory **256–4096** MiB, storage in MB. Ask for these with a recommendation like any
+  other sizing decision — do not pick silently.
+- \`diskCreate\` for persistent storage. A disk belongs to one location. ⚠️ **Several
+  deployments can mount the same disk** — \`diskGet\` lists every one of them, and
+  \`diskDelete\` fails with \`DISK_IN_USE\` while any still does. Check that list before
+  proposing a delete.
 - Wait for each per the table above. For a database the connection details (\`host\`, \`port\`)
   are **empty strings until it is ready** — that is precisely why this comes before the
   deployment.
@@ -358,50 +382,84 @@ once that it will be readable in full, and move on.
 
 ### Patching one that already exists — the common case
 
-\`deploymentDeploy\` **is a patch.** Unset fields keep their current stored value, so send
-**only what changes**. Do not read the deployment and echo the whole thing back; that turns
-a one-field change into a diff you have to get entirely right.
+\`deploymentDeploy\` is *mostly* a patch: most unset fields keep their stored value. But it
+has three sharp exceptions, and each one destroys data if you assume otherwise.
 
-- \`deploymentGet\` first, so you can show the user the current value next to the new one.
-- Env vars are the exception to "unset means unchanged", and the distinction matters:
-  - \`addEnv\` — upsert these keys, leave everything else alone
-  - \`removeEnv\` — delete these keys
-  - ⚠️ \`env\` — **replaces the entire inline env map wholesale.** Sending \`env\` with one pair
-    deletes every other inline variable. For a patch, use \`addEnv\` / \`removeEnv\`. Only use
-    \`env\` when the user genuinely means "these and nothing else".
-- Every deploy creates a **new revision**, so a bad change is recoverable with
-  \`deploymentRollback\` — mention that if the user hesitates.
-- Then wait for \`actionStatus: "success"\` as usual.
+**Always required, even on a one-field change:** \`project\`, \`location\`, \`name\` **and
+\`image\`**. There is no "send only the field I am changing" — you must read the current
+image with \`deploymentGet\` and send it back unchanged, or you will not get past validation.
+
+**Three fields that delete rather than preserve when omitted:**
+
+- ⚠️ \`env\` **replaces the entire inline env map.** Sending it with one pair deletes every
+  other inline variable. To change one key use \`addEnv\` (upsert) and \`removeEnv\` (delete);
+  only send \`env\` when the user means "these and nothing else".
+- ⚠️ \`mountDataSecretPaths\` omitted **deletes the stored value of every secret-marked
+  mounted file.** If the deployment has any, read them from \`deploymentGet\` and send the
+  paths back on every deploy.
+- ⚠️ \`envGroups: []\` unlinks every group; absent leaves them alone. See B2.
+
+**One field that cannot be changed at all:** \`type\`. It is written at creation and
+\`deploymentDeploy\` never updates it. A deployment created as a \`WebService\` stays a
+\`WebService\` forever — the only way to change it is delete and recreate. This is why the
+placeholder recipe below sets the real \`type\` at create time.
+
+So: \`deploymentGet\` first, always. Show the user the current value beside the new one, and
+carry forward \`image\` plus anything in that list the deployment already has.
+
+Every deploy creates a new revision. \`deploymentRollback\` rewinds to an earlier one —
+⚠️ but it does **not** create a new revision, and it does **not** restore env-group links or
+\`type\`. It is a partial undo, not a time machine; say so rather than promising a clean
+rollback.
 
 ### Creating a new one, when the image does not exist yet
 
-Normal when CI has never run: **create with a public placeholder and correct it
+Normal when CI has never run: **create with a public placeholder image and correct it
 afterwards.** This validates the plumbing, the cluster, the resource sizes and the env
 wiring now, instead of after a ten-minute build fails on a typo.
 
-1. \`deploymentCreate\` with \`image: "nginx:latest"\` and \`port: 80\`. Tell the user these are
-   temporary and why.
+⚠️ **The placeholder is the image, and only the image.** \`type\` cannot be changed later, so
+set the real one at create. \`nginx:latest\` only makes sense as a placeholder for a
+\`WebService\`; for a \`Worker\` or \`CronJob\` pick something that exits cleanly or idles, and
+tell the user it will restart or fail until the real image lands — that is expected, not a
+problem to debug.
+
+1. \`deploymentCreate\` with the **real** \`type\`, \`port\` and \`schedule\`, and a placeholder
+   \`image\`. Say which value is temporary.
 2. Wait for \`actionStatus: "success"\`.
-3. \`deploymentDeploy\` with the real \`port\`, env groups, disk mount, replicas and resources.
+3. \`deploymentDeploy\` with the real image once CI has pushed one — plus env groups, disk
+   mount, replicas and resources.
 4. Wait again.
 
-If the real image already exists, skip the placeholder and create with the real values.
+If the real image already exists, skip the placeholder entirely.
 
 Field rules worth knowing before you send anything:
 
-- \`type\` defaults to \`WebService\` when omitted. An **empty string is rejected** —
-  \`DEPLOYMENT_INVALID_TYPE\`. Send a real name or omit the field. Same for \`protocol\`
-  (\`none\`, \`http\`, \`https\`, \`h2c\`), which applies only to \`WebService\`.
-- \`port\` matters only for \`WebService\` and defaults to 80.
-- \`schedule\` is required for \`CronJob\`, in crontab syntax.
-- \`image\` must be a pinned reference and must not end in \`@\`.
-- \`resource.requests.cpu\` / \`.memory\` must be values from **that cluster's** \`cpu\` /
-  \`memory\` lists. \`resource.limits.memory\` is accepted but not applied anywhere — only
-  \`limits.cpu\` is.
+- \`type\` — \`WebService\` (the default when omitted), \`Worker\`, \`CronJob\`,
+  \`InternalTCPService\`. An **empty string is rejected** (\`DEPLOYMENT_INVALID_TYPE\`); omit
+  the field instead. **Immutable after creation.**
+- \`protocol\` — ⚠️ despite the four names the schema lists, a \`WebService\` accepts only
+  **\`http\` or \`https\`**; \`none\` and \`h2c\` fail validation. A \`Worker\` or \`CronJob\` must
+  leave it unset or \`none\`. Omitting it gives the type's default, which is what you usually
+  want.
+- \`port\` — defaults to 80 **only for \`WebService\`**. ⚠️ An \`InternalTCPService\` needs a
+  real port and is given \`0\` if you omit it, which deploys and then silently serves
+  nothing.
+- \`schedule\` — crontab syntax for a \`CronJob\`. ⚠️ It is **not enforced**: omitting it
+  passes validation and produces a job with no schedule. Ask for it.
+- \`image\` — the only rule is that it must not end in \`@\`. Tags like \`:latest\` are accepted;
+  recommend a pinned digest or an immutable tag for anything real, but do not claim the API
+  requires one.
+- \`resource.requests.cpu\` / \`.memory\` must be exact values from **that cluster's** \`cpu\` /
+  \`memory\` lists, and so must ⚠️ \`limits.cpu\` — a limit outside the list fails with
+  \`DEPLOYMENT_INVALID_CPU_LIMIT\`. \`limits.memory\` is accepted but never applied.
 - \`disk\` mounts one disk as \`{name, mountPath, subPath}\`; \`extraDiskMountData\` maps extra
-  file paths to \`{diskName, subPath}\`.
-- \`internal: true\` keeps it off the public ingress, and is required for
-  \`InternalTCPService\`.
+  file paths to \`{diskName, subPath}\`. If you mount a disk, send **both** \`minReplica\` and
+  \`maxReplica\` — omitting \`maxReplica\` trips a guard that rejects disks with autoscaling.
+- \`internal: true\` keeps a \`WebService\` off the public ingress. It is *documented* as
+  required for \`InternalTCPService\` but nothing validates it and the deployer only reads it
+  for a \`WebService\` — so set it for the intent, and do not rely on it to make a service
+  private.
 
 Two more values the schemas do not spell out, so they are easy to guess wrong:
 
@@ -433,28 +491,31 @@ detail you can change your mind about cheaply:
 Offer both plus the free-text escape, and recommend \`false\` unless the user says they want
 the CDN — it is the default for a reason and it works everywhere.
 
-**2. \`domainGet\`, then hand the records to the user.** It returns:
+**2. \`domainGet\`, then hand the record to the user.**
 
-- \`dnsConfig\` — the \`cname\` / \`ipv4\` / \`ipv6\` records that point the domain at Nortezh.
-  ⚠️ **The cname differs by \`cdn\` flag** — a CDN domain gets \`cname.nortezh.com\`, a non-CDN
-  domain gets its own cluster's cname. So read the value out of \`domainGet\`; never write a
-  hostname from memory or copy one from another domain.
-- \`verification.ownership\` — \`{type, name, value}\`, proving they own the domain.
-- \`verification.ssl\` — DCV records for the certificate. \`pending: true\` means it has not
-  been issued yet.
+⚠️ **A non-CDN domain is stored as success the instant it is created, with an empty
+\`verification\` object.** There is no ownership check, no DCV, and nothing to poll — it is
+immediately usable by \`routeCreate\`. Do not tell the user to wait for verification, and do
+not present empty \`verification.ownership\` / \`verification.ssl\` fields as records to add.
+They are zero-valued because that path has no verification, not because it has not run yet.
 
-**You cannot add these records — this is a handoff.** Give them the table and the one thing
-that will otherwise bite them, and nothing else:
+\`dnsConfig\` gives you **one CNAME and nothing else** — \`ipv4\` and \`ipv6\` are always empty
+arrays, so there are no A/AAAA records to hand over. ⚠️ The value differs by \`cdn\` flag: a
+CDN domain gets \`cname.nortezh.com\`, a non-CDN domain gets its own cluster's cname. Read it
+out of \`domainGet\` every time; never write a hostname from memory or copy one from another
+domain.
 
-> Add these records at your DNS provider:
+The handoff is therefore one record:
+
+> Point your domain at Nortezh with this DNS record:
 >
 > | type | name | value |
 > |---|---|---|
-> | … | … | … |
+> | CNAME | \`<their domain>\` | \`<dnsConfig.cname[0]>\` |
 >
-> On Cloudflare, set each one to **DNS only** (grey cloud), not Proxied.
+> On Cloudflare, set it to **DNS only** (grey cloud), not Proxied.
 >
-> Tell me when they are live.
+> Tell me when it is live.
 
 Then stop and wait. Do not explain TLS termination, apex flattening or SSL modes unless
 something goes wrong.
@@ -464,13 +525,13 @@ something goes wrong.
   because Cloudflare terminates TLS itself while Nortezh also redirects HTTP to HTTPS. Grey
   cloud first, always. If they want the proxy afterwards it is a deliberate second step, and
   the SSL mode must be **Full (strict)**, never Flexible.
-- The ownership and DCV records are TXT, which Cloudflare never proxies — nothing to set.
-- At the zone apex Cloudflare flattens a CNAME automatically. Expected; do not switch them
-  to the \`ipv4\` records over it.
+- At the zone apex Cloudflare flattens a CNAME automatically, which is what makes a root
+  domain work at all here — there are no A/AAAA records to fall back to. Expected; not a
+  problem to route around.
 - The proxy caches. If they enable it later and a deploy seems not to take effect, purge
   first.
-- Other providers need the same records; only the UI differs. Ask about a provider-specific
-  quirk rather than guessing at one.
+- Other providers need the same CNAME; only the UI differs. A provider that cannot CNAME at
+  the apex is a real constraint — ask, rather than guessing at a workaround.
 
 **3. \`routeCreate\`** maps \`domain\` + \`path\` onto a deployment.
 
@@ -480,9 +541,10 @@ something goes wrong.
 - ⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
   domain nobody verified.
 
-**4. Re-check \`domainGet\`** until it verifies. If it stays unverified for more than a few
-minutes, the usual causes in order: the records were added to the wrong zone, Cloudflare's
-proxy is on, or DNS has simply not propagated yet.
+**4. Confirm it works.** For a non-CDN domain there is nothing to poll — once the CNAME
+resolves, the route serves. If it does not, the usual causes in order: the record went into
+the wrong zone, Cloudflare's proxy is on, or DNS has not propagated yet. Only a **CDN**
+domain has a \`status\` worth re-checking with \`domainGet\`.
 
 ## B5. Continuous deployment
 
@@ -529,9 +591,11 @@ should trigger a deploy.
   days, service account keys do not.
 - Keys are created separately from the account, so having an account is not having a key.
   The value is shown in full at creation — treat it like a password.
-- ⚠️ If the service account is not a member of the project, every call it makes returns
-  \`PROJECT_NOT_FOUND\` — which reads like the project is missing rather than like a
-  permissions problem, and costs real time to diagnose.
+- ⚠️ If the service account is not a member of the project, every call it makes fails with
+  a code that reads like the resource is missing rather than like a permissions problem.
+  Which code depends on the domain: project, database, disk, envgroup and route routes say
+  \`PROJECT_NOT_FOUND\`; deployment routes say \`DEPLOYMENT_PROJECT_ACCESS_DENIED\`; domain
+  routes say \`FORBIDDEN\`. All three mean the same thing here — check membership first.
 - The workflow maps the two Nortezh secrets into \`SA_AUTH_EMAIL\` / \`SA_AUTH_KEY\`, which is
   what \`Nortezh/nortezh-action\` reads. Renaming the secrets means changing both places.
 - GHCR or Docker Hub instead of Artifact Registry: the auth and login steps differ — adapt

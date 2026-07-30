@@ -37,7 +37,7 @@ test('readiness is described differently for deployments and for databases/disks
   const text = deployStack!.render({})
   assert.match(text, /\*\*string\*\* `"success"`/)
   assert.match(text, /\*\*number `2`\*\*/)
-  assert.match(text, /no failed state at all/)
+  assert.match(text, /no failed value at all/)
 })
 
 test('the placeholder-first deployment sequence is spelled out', () => {
@@ -144,8 +144,8 @@ test('the destructive env-replacement footgun is called out', () => {
   // deployment.go:1076 — `if p.Env != nil { env = p.Env }` replaces the whole inline map.
   // Recommending `env` for a one-key patch would silently delete every other variable.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /replaces the entire inline env map wholesale/)
-  assert.match(flat, /use `addEnv` \/ `removeEnv`/)
+  assert.match(flat, /replaces the entire inline env map/)
+  assert.match(flat, /use `addEnv` \(upsert\) and `removeEnv` \(delete\)/)
 })
 
 test('it says an env group edit needs a redeploy to take effect', () => {
@@ -214,7 +214,7 @@ test('the cname is read from domainGet, not written from memory', () => {
   // domain.go:433 — Get branches on x.CDN: a CDN domain gets cname.nortezh.com, a non-CDN
   // domain gets its own cluster's cname. One hardcoded hostname breaks half the cases.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /The cname differs by `cdn` flag/)
+  assert.match(flat, /value differs by `cdn` flag/)
   assert.match(flat, /never write a hostname from memory/)
 })
 
@@ -222,7 +222,7 @@ test('Cloudflare proxy guidance is explicit', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   // The grey-cloud instruction rides along with the handoff itself, because getting it
   // wrong wastes the whole DNS round trip. The reasoning stays in reserve.
-  assert.match(flat, /set each one to \*\*DNS only\*\* \(grey cloud\), not Proxied/)
+  assert.match(flat, /set it to \*\*DNS only\*\* \(grey cloud\), not Proxied/)
   assert.match(flat, /Full \(strict\)/)
 })
 
@@ -307,4 +307,55 @@ test('$-sequences in argument values cannot splice the template', () => {
   const tick = deployStack!.render({ project: "acme$`END" })
   assert.match(tick, /- project: acme\$`END/)
   assert.equal(tick.length, deployStack!.render({ project: 'acme$`END' }).length)
+})
+
+test('deploymentDeploy is not described as send-only-what-changes', () => {
+  // deployment.go:399 — image is required on every call, alongside project/location/name.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Always required, even on a one-field change/)
+  assert.match(flat, /read the current image with `deploymentGet` and send it back/)
+  assert.equal(/send \*\*only what changes\*\*/.test(flat), false)
+})
+
+test('type is documented as immutable after creation', () => {
+  // updateDeployment has no b.Set("type"), so the placeholder recipe must set the real
+  // type at create time or a Worker can never stop being a WebService.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /cannot be changed at all:\*\* `type`/)
+  assert.match(flat, /The placeholder is the image, and only the image/)
+})
+
+test('omitting mountDataSecretPaths is flagged as destructive', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /deletes the stored value of every secret-marked mounted file/)
+})
+
+test('a non-CDN domain is not described as needing verification', () => {
+  // domain.go:116-126 — inserted StatusSuccess with verification '{}'.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /stored as success the instant it is created/)
+  assert.match(flat, /Do not tell the user to wait for verification/)
+  assert.match(flat, /`ipv4` and `ipv6` are always empty arrays/)
+})
+
+test('protocol is limited to http and https for a WebService', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /a `WebService` accepts only \*\*`http` or `https`\*\*/)
+})
+
+test('the database engines are not treated as returning the same fields', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*no `user`, no `database`\*\*/)
+  assert.match(flat, /cpu \*\*0\.5–4\*\* cores/)
+})
+
+test('rollback is not promised as a clean undo', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /does \*\*not\*\* create a new revision/)
+  assert.match(flat, /partial undo, not a time machine/)
+})
+
+test('route readiness appears in the convergence table', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /\| route \| `routeGet` \|/)
 })
