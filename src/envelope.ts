@@ -41,28 +41,32 @@ export const SERVER_ERROR = 'SERVER_ERROR'
  *  - 200 with `ok:true`  -> success, unwrap `result`
  *  - 200 with `ok:false` -> domain error, surfaced as a tool error with its code
  *  - 400                 -> arpc protocol error (malformed request), body may be JSON
- *  - 500                 -> unexpected server error; the backend sends an EMPTY body, so
- *                           there is nothing to parse and nothing to report but the fact
+ *  - 500                 -> server fault, never a domain error. Handled before parsing: the
+ *                           body may be arpc's `{"ok":false,"error":{}}`, an ingress's own
+ *                           JSON, HTML, or nothing at all — whatever it is gets reported
  */
 export function interpret(status: number, bodyText: string): Interpreted {
+  // A 500 is handled BEFORE parsing, not inside the parse failure. arpc emits
+  // {"ok":false,"error":{}} for one, and an ingress or CDN emits its own JSON — both parse
+  // fine, so keying off the parse result would send the ordinary production 500 down the
+  // envelope path and report it as a code-less domain error instead of a server fault.
+  // Whatever body arrived is reported rather than discarded.
+  if (status === 500) {
+    return {
+      ok: false,
+      code: SERVER_ERROR,
+      message:
+        bodyText.trim() === ''
+          ? 'The API returned HTTP 500 with an empty body. Check the API server logs.'
+          : `The API returned HTTP 500: ${truncate(bodyText)}`,
+      items: [],
+    }
+  }
+
   let parsed: unknown
   try {
     parsed = JSON.parse(bodyText)
   } catch {
-    // A 500 from this backend carries {"ok":false,"error":{}} — but a 500 from anything
-    // else in the path (ingress, a CDN) carries HTML or nothing. Say which we got rather
-    // than asserting one and sending the reader to the wrong logs.
-    if (status === 500) {
-      return {
-        ok: false,
-        code: SERVER_ERROR,
-        message:
-          bodyText.trim() === ''
-            ? 'The API returned HTTP 500 with an empty body. Check the API server logs.'
-            : `The API returned HTTP 500: ${truncate(bodyText)}`,
-        items: [],
-      }
-    }
     return {
       ok: false,
       code: 'INVALID_RESPONSE',

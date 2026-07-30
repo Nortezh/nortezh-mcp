@@ -95,3 +95,19 @@ test('a 500 with a body reports the body instead of claiming there was none', ()
   const empty = interpret(500, '')
   assert.match(empty.ok === false ? empty.message : '', /empty body/)
 })
+
+test('a 500 with a JSON body is a server fault, not a domain error', () => {
+  // Regression: handling 500 inside the parse-failure branch meant arpc's own
+  // {"ok":false,"error":{}} — which parses fine — went down the envelope path and came back
+  // as a code-less domain error, losing the "check the server logs" advice entirely.
+  const arpc = interpret(500, '{"ok":false,"error":{}}')
+  assert.equal(arpc.ok === false && arpc.code, 'SERVER_ERROR')
+
+  // An ingress or CDN emits its own JSON. That body must be reported, not discarded.
+  const ingress = interpret(500, '{"error":"upstream connect error"}')
+  assert.equal(ingress.ok === false && ingress.code, 'SERVER_ERROR')
+  assert.match(ingress.ok === false ? ingress.message : '', /upstream connect error/)
+
+  const jsonNull = interpret(500, 'null')
+  assert.equal(jsonNull.ok === false && jsonNull.code, 'SERVER_ERROR')
+})

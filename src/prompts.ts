@@ -138,8 +138,10 @@ drawn around it. So:
   not to assume either way.
 - An env group is shared across deployments in the project, which is exactly what makes it
   the right home for the database connection every service needs.
-- Names must be unique **within** the project, not globally: \`api\` in one project and \`api\`
-  in another are unrelated.
+- Most names are unique **within** the project — \`api\` in one project and \`api\` in another
+  are unrelated. ⚠️ Domains and route \`(domain, path)\` pairs are the exception: those are
+  unique across the **whole platform**, so \`DOMAIN_NOT_AVAILABLE\` can mean a stranger's
+  project already has it.
 
 Ask which project these services belong in before assuming they belong together — and
 ask whether new services join an existing project or start a new one.
@@ -240,11 +242,9 @@ the existing resources as the **first** options in any question that follows.
 
 Ask only what the intent actually needs.
 
-- **Project** — from \`projectList\`.
-  ⚠️ **You cannot create a project.** \`projectCreate\` requires a \`billingId\`, and no tool
-  here returns one — the billing routes are not exposed. If they need a new project, that is
-  a handoff: *"create the project in the Nortezh console, then tell me its slug."* Do not
-  call \`projectCreate\` and do not invent a UUID for it.
+- **Project** — from \`projectList\`. To create one you need a \`billingId\`, which
+  \`projectGet\` or \`projectOverview\` returns for any project they already have. If they have
+  none at all, that is a console handoff — never invent the UUID.
 - **Location** — \`clusterList\`. Keep the whole response; you need three things from it:
   - \`cpu\` and \`memory\` are the **selectable sizes for that cluster** (e.g. \`"0.5"\`, \`"1"\`,
     \`"512Mi"\`, \`"1Gi"\`). Resource requests must be one of these exact strings or the deploy
@@ -729,141 +729,168 @@ the tool schemas already describe. Every claim here was checked against the API 
 
 ## The dependency graph
 
+Read an arrow as "must exist first".
+
 \`\`\`
-billing account ──▶ project ──┬──▶ deployment ──▶ route ──▶ (public traffic)
-   (not exposed)              │         ▲            ▲
-                              │         │            │
-                              ├──▶ env group ────────┤ domain
-                              ├──▶ disk ─────────────┘
-                              ├──▶ pull secret ──────┘
-                              └──▶ managed database
-                                      (independent; feeds config only)
+billing account ─▶ project ─┬─▶ env group ────┐
+   (not a tool)             ├─▶ pull secret ──┼─▶ deployment ─┐
+                            ├─▶ disk ─────────┘               ├─▶ route
+                            ├─▶ domain ───────────────────────┘
+                            └─▶ managed database   (feeds config only — no platform link)
 
-cluster / location ──▶ deployment, disk, database, domain, route
+cluster / location ─▶ deployment, disk, database, domain, route, pull secret
 \`\`\`
 
-Read an arrow as "must exist first". A route is the only thing that needs two parents — a
-domain and a deployment.
+A **route** is the only resource with two parents: a domain and a deployment.
 
-⚠️ A **managed database is not connected to a deployment by the platform.** Nothing links
-them. The only connection is the values you copy from \`db*Get\` into the deployment's
-configuration, which means nothing stops a deployment pointing at a database that was
-deleted, or at the wrong one.
+⚠️ A **managed database is not connected to a deployment by the platform.** No foreign key,
+no join table, nothing in the deployer. The only connection is the values you copy out of
+\`db*Get\` into the deployment's configuration — so nothing stops a deployment pointing at a
+database that was deleted, or at the wrong one.
 
 ## Project
 
-**Is** a tenancy boundary: billing, membership, and the namespace that resource names are
+**Is** a tenancy boundary: billing, membership, and the namespace most resource names are
 unique within. Not one application — it holds **many** deployments, databases, disks, env
 groups and domains.
 
-- **Depends on:** an **active billing account**. \`projectCreate\` needs its \`billingId\`
-  (a UUID), and no exposed tool returns one, so **project creation is a handoff to the
-  console**, not something to attempt.
+- **Depends on:** an **active** billing account. \`projectCreate\` takes its \`billingId\`
+  (a UUID), which you can read from \`projectGet\` or \`projectOverview\` on a project the user
+  already has. Only if they have no project at all is this a console handoff.
 - **Depended on by:** everything.
 - **Ready:** immediately. Synchronous.
-- **Mutable:** \`projectEdit\` changes the display name. The **slug is the identity** every
-  other call uses.
-- **Members:** \`projectListMember\` reads them. Adding and removing members is **not
-  exposed** here — that is a console handoff. ⚠️ The underlying API accepts a \`role\` but
-  does not persist or enforce it: every member is equivalent except the single owner, so
-  "add them as read-only" is not a thing you can promise.
+- **Mutable:** \`projectEdit\` changes the display name — ⚠️ **owner-only**; a non-owner gets
+  \`PROJECT_NOT_FOUND\`, which looks like the project is missing. The **slug is the identity**
+  every other call uses and cannot be changed.
+- **Members:** \`projectListMember\` reads them; adding and removing are **not exposed**.
+  ⚠️ The \`role\` it returns is meaningless — \`projectListMember\` reports \`"Owner"\` for every
+  member and \`projectOverview\` reports \`"-"\`. The API accepts a role on add but never
+  persists or enforces one, so every member is equivalent except the single owner.
+- **Deleting** is not exposed. It is owner-only, a *soft* delete, and cascades **only**
+  deployments — routes, disks, domains, databases, env groups and pull secrets are left
+  behind.
 
 ## Cluster (a "location")
 
-**Is** a place to run things. Every deployment, disk, database, domain and route names one,
-and the value is the cluster's \`id\`.
+**Is** a place to run things. Every deployment, disk, database, domain, route and pull
+secret names one, by the cluster's \`id\`.
 
-- **Depended on by:** deployments, disks, databases, domains and routes — every one of them
-  names a location.
+- **Depended on by:** all of the above.
 - **Ready:** always — you only ever list them.
-- **Mutable:** not by you. A cluster is operator-managed; \`clusterList\` is the only route.
-- **Carries three things you need:** the \`cpu\` and \`memory\` lists (resource requests must
-  be exact members of them), \`features\` (a capability hint, **not** the gate), and
-  \`isTrial\` (a property of the cluster, not of the caller's billing).
-- ⚠️ **A resource cannot move between locations.** Changing where something runs means
-  delete and recreate.
+- **Mutable:** not by you. Operator-managed; \`clusterList\` is the only route.
+- ⚠️ **Pass \`projectSlug\` to \`clusterList\`.** Without it you get every enabled cluster,
+  including ones this project's billing cannot use — and the create then fails with
+  \`DEPLOYMENT_ACCESS_DENIED\` / \`DISK_ACCESS_DENIED\` / \`DATABASE_PROJECT_ACCESS_DENIED\`.
+- **Carries:** the \`cpu\` and \`memory\` lists (resource requests must be exact string members
+  of them), \`features\` (a capability hint, **not** the gate), and \`isTrial\` (a property of
+  the cluster — "accepts trial workloads" — not of the caller's billing).
+- ⚠️ **Nothing moves between locations.** Changing where something runs is delete and
+  recreate.
 
 ## Deployment
 
-**Is** a running workload — the thing that actually serves your code.
+**Is** a running workload — the thing that serves your code.
 
 - **Depends on:** a project and a cluster. Optionally an env group, a disk, a pull secret.
-- **Depended on by:** routes (\`target: deployment://<name>\`).
-- **Ready:** \`deploymentGet\` until \`actionStatus\` is the **string** \`"success"\`. This is
-  the only resource that can report \`"failed"\`.
-- **Mutable:** almost everything, through \`deploymentDeploy\`, which always requires
-  \`project\`, \`location\`, \`name\` **and \`image\`** even for a one-field change.
-- ⚠️ **Immutable: \`type\`.** Written at create, never updated. A \`WebService\` cannot become
-  a \`Worker\` — delete and recreate.
-- ⚠️ **Destructive when omitted:** \`env\` (replaces the whole inline map),
-  \`mountDataSecretPaths\` (drops every secret-marked file's value), \`envGroups: []\`
-  (unlinks all groups; absent leaves them alone).
-- **Four shapes**, chosen by \`type\`: \`WebService\` (HTTP, gets a URL, the only one a route
-  can target), \`Worker\` (no ingress), \`CronJob\` (needs a \`schedule\`), \`InternalTCPService\`
+- **Depended on by:** routes. ⚠️ **Deleting a deployment silently deletes its routes** — the
+  FK cascades, there is no in-use check and no warning.
+- **Ready:** \`deploymentGet\` until \`actionStatus\` is the **string** \`"success"\`; \`"failed"\`
+  is a real outcome.
+- **Mutable:** most things, via \`deploymentDeploy\` — which always requires \`project\`,
+  \`location\`, \`name\` **and \`image\`**, even for a one-field change.
+- ⚠️ **Immutable: \`type\`.** Written at create, never updated. A \`WebService\` cannot become a
+  \`Worker\` — delete and recreate.
+- ⚠️ **Fields that destroy rather than patch:**
+  - \`env\` **when supplied** replaces the whole inline map. Omitting it is safe and keeps
+    the stored one; use \`addEnv\` (upsert) and \`removeEnv\` (delete) to change single keys.
+  - \`mountDataSecretPaths\` **when omitted** drops every secret-marked file's value. This is
+    the one that bites on a patch.
+  - \`envGroups: []\` unlinks every group; absent leaves them alone.
+- **Four shapes**, by \`type\`: \`WebService\` (HTTP, the only thing a route can target),
+  \`Worker\` (no ingress), \`CronJob\` (needs \`schedule\`), \`InternalTCPService\`
   (cluster-internal; needs a real \`port\` or it silently gets \`0\`).
+- ⚠️ **\`deploymentGet.url\` is always populated but does not always resolve.** It is a bare
+  hostname with no scheme, and an external ingress exists only for a **non-internal
+  WebService**. A Worker, a CronJob, an InternalTCPService or a WebService with
+  \`internal: true\` gets a URL string that serves nothing.
+- \`internal: true\` on a WebService **deletes its external ingress** — the one field that
+  silently takes a service off the internet.
+- \`maxReplica\` tops out at **20**.
 
 ## Revision
 
-**Is** a numbered snapshot of a deployment's spec. Not a resource you create — every deploy
+**Is** a numbered snapshot of a deployment's spec. Not something you create — every deploy
 makes one.
 
-- **Depends on:** a deployment. It has no independent existence and is deleted with it.
+- **Depends on:** a deployment. No independent existence; deleted with it.
 - **Depended on by:** nothing. \`deploymentRollback\` names one by number.
-- **Ready:** it has no state of its own — the deployment's \`actionStatus\` is the answer.
-- **Mutable:** no. A revision is a fixed snapshot; deploying again makes a new one.
-- ⚠️ \`deploymentRollback\` rewinds \`deployments.revision\` to an earlier number. It does
-  **not** create a new revision, and it does **not** restore env-group links or \`type\`. A
-  partial undo.
+- **Ready:** no state of its own — the deployment's \`actionStatus\` is the answer.
+- **Mutable:** no. A snapshot; deploying again makes a new one.
+- ⚠️ \`deploymentRollback\` **rewinds** \`deployments.revision\` to an earlier number. It does
+  **not** create a new revision, and does **not** restore env-group links or \`type\`. A
+  partial undo. (The tool description generated from the API says the opposite — the API's
+  own annotation is wrong there.)
 - \`deploymentLogRevision\` lists them, which is how you find a number to roll back to.
 
 ## Env group
 
 **Is** a named set of environment variables, shared by any deployment in the project that
-lists it. The right home for values several services need — a database URL, a queue address.
+lists it. The right home for values several services need.
 
 - **Depends on:** a project.
-- **Depended on by:** deployments that list it in \`envGroups\`. ⚠️ \`envgroupDelete\` is
-  refused by a foreign key while any deployment still links it.
+- **Depended on by:** deployments listing it in \`envGroups\`. \`envgroupDelete\` is refused
+  with **\`ENVGROUP_LINKED\`** while any still does; \`envgroupGet.linkedDeployments\` names
+  them.
 - **Ready:** immediately. Synchronous.
 - **Mutable:** ⚠️ \`envgroupUpdate\` **replaces the whole map** — any key left out is deleted,
   and omitting \`data\` empties the group. Read with \`envgroupGet\`, change, send it all back.
   The **name is immutable** (lowercase, 3–27 chars).
-- ⚠️ **Plain text, never masked.** The API says outright: do not put real secrets in one.
+- ⚠️ **Plain text, never masked.** The API says it outright: do not put real secrets in one.
 - ⚠️ **Baked at deploy time.** Editing a group does not change a running deployment until it
   is redeployed.
 
 ## Disk
 
-**Is** persistent storage, mounted into a deployment at a path.
+**Is** persistent storage, mounted into a deployment at a path. \`size\` is in **MB**.
 
 - **Depends on:** a project and a cluster. Gated on the **billing account's** disk feature —
-  a refusal is \`ACCESS_DENIED\`, not a cluster problem.
-- **Depended on by:** ⚠️ **any number of deployments** — a disk is not exclusive.
-  \`diskGet\` lists every deployment mounting it, and \`diskDelete\` fails \`DISK_IN_USE\` while
-  any does.
+  a refusal is \`ACCESS_DENIED\`.
+- **Depended on by:** any number of deployments — a disk is **not exclusive**.
 - **Ready:** \`diskGet\` until \`actionStatus\` is the **number \`2\`**. No failure value — a
   stuck disk sits at \`1\` forever.
-- **Mutable:** \`diskUpdate\` resizes. Location and name are fixed.
-- Mount with \`disk: {name, mountPath, subPath}\`; extra paths via \`extraDiskMountData\`. Send
-  both \`minReplica\` and \`maxReplica\` when a disk is attached.
+- **Mutable:** \`diskUpdate\` **grows** it. Shrinking fails \`DISK_CANNOT_DECREASE_SIZE\`.
+  Location and name are fixed.
+- ⚠️ **\`DISK_IN_USE\` does not protect you.** The in-use check reads **only**
+  \`extraDiskMountData\`; a deployment mounting the disk through the primary
+  \`disk: {name, mountPath, subPath}\` field is invisible to it and to
+  \`diskGet.bindingDeployments\`. So \`diskDelete\` will delete a disk out from under a running
+  workload without complaint. **Before deleting a disk, check every deployment's \`disk\`
+  field yourself.**
+- If a disk is attached, send both \`minReplica\` and \`maxReplica\`. Omitting \`maxReplica\`
+  trips a guard; note the guard does **not** catch a genuine \`min=1,max=3\` autoscaler, which
+  will happily put several pods on one read-write-once volume.
 
 ## Managed database (Postgres / Redis / Mongo)
 
 **Is** a provisioned database instance. Its connection details are the point.
 
-- **Depends on:** a project and a cluster whose \`cluster_enabled_features\` allow databases
+- **Depends on:** a project, and a cluster whose \`cluster_enabled_features\` allow databases
   — a different table from \`clusterList\`'s \`features\`, so that can look fine and the create
   still fail with \`DATABASE_CLUSTER_NOT_SUPPORTED\`.
-- **Depended on by:** nothing structurally. See the warning in the graph above.
+- **Depended on by:** nothing structurally. See the warning under the graph.
 - **Ready:** \`db*Get\` until \`actionStatus\` is the **number \`2\`** *and* \`host\` is non-empty.
   \`host\` and \`port\` are empty strings until then. No failure value.
-- **Mutable:** essentially nothing. No resize, no password rotation. Getting it wrong means
-  create a new one and migrate.
+- **Mutable:** nothing. No resize, no password rotation, and the image is fixed by the
+  platform (\`postgres:16\`, \`redis:8\`, \`mongo:8.2\`). Getting it wrong means create another
+  and migrate.
 - ⚠️ **You supply the password at create**, and \`db*Get\` returns it in plain text forever.
-- **Sizes are bounded and required:** cpu **0.5–4** cores, memory **256–4096** MiB, plus
+- **Sizes are required and bounded:** cpu **0.5–4** cores, memory **256–4096** MiB, plus
   \`storageSize\` in MB.
-- ⚠️ **The engines return different fields.** Postgres: \`host, port, user, database,
-  password\`. Mongo: no \`database\`. Redis: no \`user\`, no \`database\`.
+- ⚠️ **The engines return different fields.** All three give \`host, port, password,
+  storageSize, cpu, memory\`. Postgres adds \`user\` and \`database\`; Mongo adds \`user\` only;
+  Redis adds neither.
+- ⚠️ **Names collide across engines** — a Postgres called \`cache\` blocks a Redis called
+  \`cache\` in the same project.
 
 ## Pull secret
 
@@ -871,12 +898,13 @@ lists it. The right home for values several services need — a database URL, a 
 
 - **Depends on:** a project and a cluster.
 - **Depended on by:** deployments naming it in \`pullSecret\`. Nothing stops you deleting one
-  a deployment still references — the next pull just fails.
-- **Ready:** \`pullsecretGet\` — \`status\` is an integer, same shape as disk.
-- **Mutable:** nothing. There is no update route; to rotate credentials, create a new one
-  and point the deployment at it, or delete and recreate under the same name.
-- Needs \`serverUrl\`, \`username\`, \`password\`. \`pullsecretGet\` returns the credentials
-  decoded — intentionally, but it means anyone who can read the project can read them.
+  that is still referenced — the next pull just fails.
+- **Ready:** \`pullsecretGet\` — \`status\` is the **number \`2\`**, same shape as disk.
+- **Mutable:** nothing; there is no update route. Rotate by creating another.
+- ⚠️ Names are unique per **(project, location)** — the same name can exist twice in one
+  project, in different locations.
+- Needs \`serverUrl\`, \`username\`, \`password\`. \`pullsecretGet\` returns them decoded, so
+  anyone who can read the project can read the credentials.
 
 ## Domain
 
@@ -884,30 +912,39 @@ lists it. The right home for values several services need — a database URL, a 
 — that is what a route does.
 
 - **Depends on:** a project and a cluster.
-- **Depended on by:** routes.
-- **Ready:** ⚠️ **a non-CDN domain is stored as success the moment it is created**, with an
-  empty \`verification\` object. Nothing to verify, nothing to poll. Only \`cdn: true\` is
-  asynchronous.
+- **Depended on by:** routes. Refused with \`DOMAIN_IN_USED\` while a route in that location
+  still needs it, and \`DOMAIN_CAN_NOT_DELETE\` while it is pending. ⚠️ Deleting a domain that
+  does not exist **returns success**.
+- **Ready:** \`status\` is a **string** — \`pending\`, \`success\`, \`error\`, \`verify\`.
+  ⚠️ **\`error\` is a real outcome**, so a domain is the one non-deployment resource that can
+  fail. A **non-CDN** domain is written \`success\` at create with an empty \`verification\`
+  object — nothing to verify and nothing to poll. Only \`cdn: true\` is asynchronous.
 - **Mutable:** nothing. Delete and recreate.
-- \`cdn\` defaults to \`false\`. \`cdn: true\` is billing-feature-gated and rejected outright for
-  a trial account.
-- \`domainGet\`'s \`dnsConfig\` carries **one CNAME**; \`ipv4\` and \`ipv6\` are always empty. The
-  cname value differs by the \`cdn\` flag — always read it, never write one from memory.
+- ⚠️ **Domains are globally unique across the whole platform.** \`DOMAIN_NOT_AVAILABLE\` can
+  mean someone else's project already registered it.
+- \`cdn\` defaults to \`false\`; \`cdn: true\` is billing-feature-gated and rejected outright for
+  a trial account. \`wildcard: true\` on \`example.com\` lets routes be made for
+  \`api.example.com\` without registering that separately.
+- \`domainGet.dnsConfig\` carries **one CNAME**; \`ipv4\` and \`ipv6\` are always empty. The cname
+  value differs by the \`cdn\` flag — always read it, never write one from memory.
 
 ## Route
 
-**Is** the mapping that sends traffic for a domain and path to a deployment. The thing that
-actually makes a custom domain serve.
+**Is** the mapping that sends traffic for a domain and path to a deployment. What actually
+makes a custom domain serve.
 
-- **Depends on:** a domain **and** a deployment, both existing, plus the project and cluster.
+- **Depends on:** a deployment, and normally a registered domain — ⚠️ but
+  \`skipDomainVerify: true\` bypasses the ownership check entirely, so a route can exist for a
+  domain nobody registered. It exists for tests; do not set it.
 - **Ready:** \`routeGet\` until \`status\` is the **number \`2\`**. No failure value.
 - **Mutable:** nothing — delete and recreate.
 - ⚠️ \`target\` is a **URI**: \`deployment://<name>\`. A bare name fails validation.
 - ⚠️ Only a \`WebService\` can be a target — anything else is \`CAN_MAP_ONLY_WEB_SERVICE\`.
-- \`path\` must start with \`/\`. Optional basic auth lives in \`config.basicAuth\`, and is
-  returned in plain text by \`routeGet\`.
-- Every deployment already has a working URL without any route at all — \`deploymentGet\`
-  returns it as \`url\`. Routes and domains are only for custom hostnames.
+- ⚠️ **\`(domain, path)\` is globally unique**, not per project.
+- \`path\` must start with \`/\`. \`config.rewritePath\` rewrites before proxying, and
+  \`config.basicAuth\` adds HTTP basic auth — returned in plain text by \`routeGet\`.
+- Every deployment already has a hostname without any route; routes and domains are only for
+  custom ones.
 
 ## Service account (not exposed here)
 
@@ -915,28 +952,33 @@ actually makes a custom domain serve.
 since user tokens last 7 days. It is a user row with an email of the form
 \`<slug>@<project>.service-account.nortezh.com\`, which is why it can be a project member.
 
-- **Depends on:** a project, and **membership of that project**. ⚠️ Without membership every
-  call fails with a code that reads like the resource is missing: \`PROJECT_NOT_FOUND\` on
-  project, database, disk, envgroup and route routes; \`DEPLOYMENT_PROJECT_ACCESS_DENIED\` on
-  deployment routes; \`FORBIDDEN\` on domain routes. All three mean the same thing here.
-- **Depended on by:** nothing in the platform — but any CI that authenticates with its key
-  breaks the moment it is deleted.
+- **Depends on:** a project, and **membership of it**. ⚠️ Without membership every call fails
+  with a code that reads like the resource is missing: \`PROJECT_NOT_FOUND\` on project,
+  database, disk, envgroup, route and pullsecret routes; \`DEPLOYMENT_PROJECT_ACCESS_DENIED\`
+  on deployment routes; \`CLUSTER_PROJECT_NOT_FOUND\` then \`FORBIDDEN\` on cluster; and on
+  domain routes \`PROJECT_NOT_FOUND\` when the slug does not exist, \`FORBIDDEN\` when it does
+  but the caller is not a member.
+- **Depended on by:** nothing in the platform — but any CI using its key breaks when it goes.
 - **Ready:** immediately. Synchronous.
-- **Mutable:** the account itself, no. Keys are added and revoked independently, up to 10
-  per account.
-- Keys are created separately from the account and are readable in full afterwards, so
-  having an account is not having a key.
-- **Creating one is a console handoff** — these tools are deliberately not exposed here.
+- **Mutable:** the account, no. Keys are added and revoked independently, up to 10.
+- Keys are created separately from the account and readable in full afterwards, so having an
+  account is not having a key.
+- **Creating one is a console handoff** — these tools are deliberately not exposed.
 
 ## Things that are true everywhere
 
-- **Names are unique within a project**, not globally.
-- **A domain error is HTTP 200 with \`ok:false\`.** The MCP layer already converts those to
+- **Most names are unique within a project** — but ⚠️ **domains and \`(domain, path)\` routes
+  are globally unique across the platform**, pull secrets are unique per
+  (project, location), and database names collide across engines.
+- **A domain error is HTTP 200 with \`ok:false\`.** The MCP layer already converts those into
   tool errors — if a call errors, it really failed.
-- **Only a deployment can report failure.** Database, disk and route report a bare integer
-  \`1\` = pending, \`2\` = success, and have no failed value at all, so anything stuck sits at
-  \`1\` indefinitely. Bound the wait and report it.
-- **Nothing moves between projects or locations.** Both mean delete and recreate.`
+- **Only deployments and domains can report failure.** Database, disk, route and pull secret
+  report a bare integer \`1\` = pending, \`2\` = success, with no failure value at all, so
+  anything stuck sits at \`1\` indefinitely. Bound those waits and report.
+- **Nothing moves between projects or locations.** Both mean delete and recreate.
+- **Deletes are quieter than you expect.** A deployment takes its routes with it, a project
+  delete leaves most of its resources behind, deleting a missing domain succeeds, and
+  \`DISK_IN_USE\` misses the common kind of disk mount.`
 
 export const PROMPTS: PromptSpec[] = [
   {
@@ -956,13 +998,17 @@ export const PROMPTS: PromptSpec[] = [
     // so "read the resources prompt if unsure" was advice it could never act on. Composing
     // the one constant into both surfaces keeps a single source and no drift.
     //
-    // Both use a replacer FUNCTION, not a replacement string: String.replace interprets
-    // `$&`, "$`", `$'` and `$n` in the replacement, so a value containing one of those
-    // would splice pieces of the template back into the output.
+    // ONE pass over both tokens, not two chained replaces. Two passes let the first
+    // substitution's OUTPUT become the second's subject, so an argument value of literally
+    // "{{RESOURCE_MODEL}}" got expanded — splicing the whole reference into the user-said
+    // block and leaving the real placeholder unfilled.
+    //
+    // The replacer is a FUNCTION, not a replacement string: String.replace interprets `$&`,
+    // "$`", `$'` and `$n` in a replacement string, so a value containing one of those would
+    // splice pieces of the template back into the output.
     render: (args) =>
-      DEPLOY_STACK.replace('{{GIVEN}}', () => given(args)).replace(
-        '{{RESOURCE_MODEL}}',
-        () => RESOURCE_MODEL,
+      DEPLOY_STACK.replace(/\{\{(GIVEN|RESOURCE_MODEL)\}\}/g, (_match, token: string) =>
+        token === 'GIVEN' ? given(args) : RESOURCE_MODEL,
       ),
   },
   {

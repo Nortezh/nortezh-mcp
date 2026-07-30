@@ -60,15 +60,30 @@ async function runServer(): Promise<void> {
       try {
         console.error('Token rejected — reopening the browser to sign in again.')
         await login(apiUrl)
-        client.setToken(resolveAuth().token)
-        tokenGeneration += 1
-        return true
       } catch (error) {
         console.error(`Re-login failed: ${error instanceof Error ? error.message : String(error)}`)
         quietUntil = Date.now() + RELOGIN_BACKOFF_MS
         return false
       } finally {
         reloginInFlight = null
+      }
+
+      // Separate from the login attempt on purpose. resolveAuth() throws when the stored
+      // credentials do not match NORTEZH_API_URL — a configuration fault, not a failed
+      // login. Treating it as a login failure threw away a token the user had just gone to
+      // the browser for, and armed a backoff that would reopen the browser on a loop.
+      try {
+        client.setToken(resolveAuth().token)
+        tokenGeneration += 1
+        return true
+      } catch (error) {
+        console.error(
+          `Signed in, but the credentials cannot be used: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        )
+        quietUntil = Number.POSITIVE_INFINITY
+        return false
       }
     })()
 
@@ -138,6 +153,18 @@ async function runServer(): Promise<void> {
     // Retried at most once: if the fresh token is rejected too, the problem is not expiry.
     if (!outcome.ok && outcome.code === UNAUTHORIZED && (await relogin(generationAtCall))) {
       outcome = await client.call(tool.route, args)
+
+      // A login that SUCCEEDS but whose token is still rejected is the dangerous case: the
+      // catch above never fires, so nothing arms the backoff, and the next tool call opens
+      // another browser — one per call, indefinitely. Signing in as the wrong Google
+      // account, or pointing at an API the account has no access to, does exactly this.
+      if (!outcome.ok && outcome.code === UNAUTHORIZED) {
+        quietUntil = Date.now() + RELOGIN_BACKOFF_MS
+        console.error(
+          'Signed in, but the API still rejects the token. Not reopening the browser for ' +
+            `${RELOGIN_BACKOFF_MS / 60_000} minutes — check NORTEZH_API_URL and which account you used.`,
+        )
+      }
     }
 
     if (outcome.ok) {

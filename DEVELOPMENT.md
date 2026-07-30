@@ -4,8 +4,13 @@ Everything user-facing is in [README.md](./README.md). This is the part that mat
 you are changing the server.
 
 ```bash
-npm run check      # generate + typecheck + test
+npm run check      # verify the committed tools.ts, typecheck, test
 ```
+
+`check` does **not** regenerate `src/generated/tools.ts` — it generates into memory and
+compares. Regenerating first would mean the tests grade the generator's fresh output
+against itself, so a stale or hand-edited artifact would always pass. It works with no git
+repository, which a `git diff` guard did not.
 
 ## Layout
 
@@ -13,6 +18,7 @@ npm run check      # generate + typecheck + test
 scripts/allowlist.ts   which operations become tools — the only hand-maintained list
 scripts/generate.ts    spec + allowlist -> src/generated/tools.ts
 scripts/sync-spec.ts   vendor swagger.json from ../nortezh-backend
+scripts/check-generated.ts  fail if the committed tools.ts is not what the generator makes
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
 src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)

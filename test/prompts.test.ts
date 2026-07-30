@@ -6,6 +6,11 @@ import { TOOLS } from '../src/generated/tools.js'
 
 const deployStack = PROMPTS.find((prompt) => prompt.name === 'deploy-stack')
 
+/** Every property name across every tool schema — these are fields, not tool names. */
+const FIELD_NAMES = new Set(
+  TOOLS.flatMap((tool) => Object.keys((tool.inputSchema as { properties?: object }).properties ?? {})),
+)
+
 test('deploy-stack exists and names its arguments', () => {
   assert.ok(deployStack !== undefined)
   assert.deepEqual(
@@ -37,7 +42,7 @@ test('readiness is described differently for deployments and for databases/disks
   const text = deployStack!.render({})
   assert.match(text, /\*\*string\*\* `"success"`/)
   assert.match(text, /\*\*number `2`\*\*/)
-  assert.match(text, /no failed value at all/)
+  assert.match(text, /no failure value at all/)
 })
 
 test('the placeholder-first deployment sequence is spelled out', () => {
@@ -71,6 +76,9 @@ test('every tool the prompt instructs the model to call actually exists', () => 
     .map((match) => match[1] as string)
     // Only check things that look like our tool ids and are plausibly meant as calls.
     .filter((candidate) => /^(project|deployment|disk|db|envgroup|route|domain|pullsecret|cluster|auth)[A-Z]/.test(candidate))
+    // Field names share the prefix-plus-capital shape (projectSlug, deploymentId). Only
+    // flag identifiers that are not a parameter of any tool.
+    .filter((candidate) => !FIELD_NAMES.has(candidate))
 
   assert.ok(referenced.length > 10, 'expected the prompt to name tools')
   for (const name of referenced) {
@@ -188,7 +196,9 @@ test('a project is described as holding many deployments and databases', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /A Nortezh \*\*project\*\* is not one application/)
   assert.match(flat, /one project with three deployments/)
-  assert.match(flat, /unique \*\*within\*\* the project, not globally/)
+  assert.match(flat, /Most names are unique \*\*within\*\* the project/)
+  // Domains and (domain, path) are the platform-wide exception.
+  assert.match(flat, /unique across the \*\*whole platform\*\*/)
 })
 
 test('per-service configuration is treated as its own step', () => {
@@ -253,13 +263,14 @@ test('route target is documented as a deployment:// URI, not a bare name', () =>
   assert.match(flat, /`path` must start with `\/`/)
 })
 
-test('it does not tell the model to create a project it cannot create', () => {
-  // project.go:162,183 — projectCreate requires a billingId UUID, and every billing route
-  // is excluded from the exposed tools, so there is no way to obtain one. Instructing the
-  // model to call it produces either a VALIDATE_ERROR or an invented UUID.
+test('projectCreate is described as possible, with where billingId comes from', () => {
+  // An earlier version claimed no exposed tool returns a billingId, so project creation was
+  // impossible. False: project.go:302 puts billingId on GetResult, and both projectGet and
+  // projectOverview are exposed. The real constraint is only the very first project.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /You cannot create a project/)
-  assert.match(flat, /Do not call `projectCreate` and do not invent a UUID/)
+  assert.match(flat, /`projectGet` or `projectOverview` returns/)
+  assert.match(flat, /never invent the UUID/)
+  assert.equal(/You cannot create a project/.test(flat), false)
 })
 
 test('metric ranges are enumerated, since the schema does not', () => {
@@ -334,7 +345,7 @@ test('omitting mountDataSecretPaths is flagged as destructive', () => {
 test('a non-CDN domain is not described as needing verification', () => {
   // domain.go:116-126 — inserted StatusSuccess with verification '{}'.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /stored as success the moment it is created/)
+  assert.match(flat, /written `success` at create/)
   assert.match(flat, /no verification at all/)
   assert.match(flat, /`ipv4` and `ipv6` are always empty/)
 })
@@ -391,12 +402,12 @@ test('the resource model does not contradict deploy-stack on the sharp facts', (
   // Each of these was a confirmed error in deploy-stack at some point; the model must
   // state the corrected version, or the two prompts will disagree in the same session.
   assert.match(model, /Immutable: `type`/)
-  assert.match(model, /non-CDN domain is stored as success the moment it is created/)
+  assert.match(model, /non-CDN\*\* domain is written `success` at create/)
   assert.match(model, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
   assert.match(model, /replaces the whole map/)
   assert.match(model, /do not put real secrets in one/)
-  assert.match(model, /any number of deployments\*\* — a disk is not exclusive/)
-  assert.match(model, /no exposed tool returns one/)
+  assert.match(model, /any number of deployments — a disk is \*\*not exclusive\*\*/)
+  assert.match(model, /`projectGet` or `projectOverview`/)
 })
 
 test('deploy-stack INLINES the resource model rather than pointing at it', () => {
@@ -415,13 +426,15 @@ const CANONICAL_FACTS: Array<[string, RegExp]> = [
   ['deployment type is immutable', /Immutable: `type`/],
   ['env group update replaces', /replaces the whole map/],
   ['env groups are not for secrets', /do not put real secrets in one/],
-  ['non-CDN domain needs no verification', /stored as success the moment it is created/],
+  ['non-CDN domain needs no verification', /written `success` at create/],
   ['dnsConfig is one CNAME', /`ipv4` and `ipv6` are always empty/],
   ['route target is a URI', /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/],
   ['route targets WebService only', /CAN_MAP_ONLY_WEB_SERVICE/],
-  ['disks are shared', /any number of deployments\*\* — a disk is not exclusive/],
-  ['db engines differ', /no `user`, no `database`/],
-  ['project creation is blocked', /no exposed tool returns one/],
+  ['disks are shared', /any number of deployments — a disk is \*\*not exclusive\*\*/],
+  ['db engines differ', /Postgres adds `user` and `database`; Mongo adds `user` only/],
+  ['billingId is readable', /`projectGet` or `projectOverview`/],
+  ['DISK_IN_USE is unreliable', /`DISK_IN_USE` does not protect you/],
+  ['domains can fail', /`error` is a real outcome/],
   ['rollback is partial', /does \*\*not\*\* create a new revision/],
   ['deploy always needs image', /even for a one-field change/],
 ]
@@ -451,4 +464,17 @@ test('every resource in the model answers the same questions', () => {
     assert.match(section, /\*\*Ready:\*\*/, `${name} does not state readiness`)
     assert.match(section, /\*\*Mutable:\*\*/, `${name} does not state mutability`)
   }
+})
+
+test('an argument value cannot expand the other placeholder', () => {
+  // Two chained replaces let the first substitution's OUTPUT become the second's subject,
+  // so an argument of literally "{{RESOURCE_MODEL}}" was expanded — splicing the whole
+  // reference into the user-said block and leaving the real placeholder unfilled.
+  const rendered = deployStack!.render({ project: '{{RESOURCE_MODEL}}' })
+  assert.match(rendered, /- project: \{\{RESOURCE_MODEL\}\}/)
+  assert.equal(rendered.split(resources!.render({})).length, 2, 'the model must appear exactly once')
+
+  // And the reverse ordering.
+  const other = deployStack!.render({ project: '{{GIVEN}}' })
+  assert.match(other, /- project: \{\{GIVEN\}\}/)
 })
