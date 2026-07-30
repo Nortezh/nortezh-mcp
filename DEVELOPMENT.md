@@ -18,8 +18,32 @@ src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
+src/prompts.ts         guided workflows exposed over prompts/list
 src/index.ts           MCP server, stdio transport
 ```
+
+## Prompts are how a "skill" ships with the server
+
+`src/prompts.ts` holds the guided workflows. The client lists them over `prompts/list` and
+surfaces them as slash commands, so `claude mcp add` is the entire install — no `SKILL.md`
+to symlink, and it works in any MCP client rather than only Claude Code.
+
+Write into a prompt only what the tool schemas **cannot** carry:
+
+- the order operations must happen in, and what depends on what
+- which failures are expected rather than wrong (`CAN_MAP_ONLY_WEB_SERVICE` on a Worker,
+  `DEPLOYMENT_CLUSTER_NOT_SUPPORT_TRIAL` on trial billing)
+- asynchrony — that `deploymentGet.actionStatus` must be polled until it leaves `pending`
+- steps that leave this API entirely: DNS records, GitHub secrets, service-account keys
+
+Do **not** restate a single call's parameters. That comes from the generated schema and a
+copy only goes stale.
+
+⚠️ The `deploy-stack` prompt embeds a GitHub Actions workflow inside a TypeScript template
+literal, so `${{ … }}` has to be escaped. One backslash too many ships `\${{ secrets.X }}`,
+which Actions treats as a literal string, and `\\` where the shell wants a single line
+continuation — a workflow that reviews fine and fails at run time. `test/prompts.test.ts`
+asserts the rendered text, and also that every tool the prompt names is actually exposed.
 
 ## Tools are generated, not written
 

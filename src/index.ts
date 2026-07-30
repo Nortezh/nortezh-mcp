@@ -9,12 +9,18 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import {
+  CallToolRequestSchema,
+  GetPromptRequestSchema,
+  ListPromptsRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
 
 import { NortezhClient } from './client.js'
 import { API_URL_ENV, DEFAULT_API_URL, resolveApiUrl, resolveAuth, TOKEN_ENV } from './config.js'
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
+import { PROMPTS } from './prompts.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
 
 const VERSION = '0.1.0'
@@ -58,8 +64,36 @@ async function runServer(): Promise<void> {
 
   const server = new Server(
     { name: 'nortezh', version: VERSION },
-    { capabilities: { tools: {} } },
+    { capabilities: { tools: {}, prompts: {} } },
   )
+
+  // Prompts are how a guided workflow ships WITH the server: the client surfaces them as
+  // slash commands, so `claude mcp add` is the entire install. See src/prompts.ts.
+  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+    prompts: PROMPTS.map((prompt) => ({
+      name: prompt.name,
+      description: prompt.description,
+      arguments: prompt.arguments,
+    })),
+  }))
+
+  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+    const prompt = PROMPTS.find((candidate) => candidate.name === request.params.name)
+    if (prompt === undefined) throw new Error(`Unknown prompt: ${request.params.name}`)
+
+    return {
+      description: prompt.description,
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: prompt.render(request.params.arguments ?? {}),
+          },
+        },
+      ],
+    }
+  })
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOLS.map((tool) => ({

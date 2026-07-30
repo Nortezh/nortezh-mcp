@@ -59,6 +59,27 @@ Just ask:
 Destructive tools (`deploymentDelete`, `deploymentRollback`, `diskDelete`, …) are marked
 as such in the spec, so Claude asks before running them.
 
+## Guided workflows
+
+The server ships a prompt, so it arrives with `claude mcp add` — nothing extra to install:
+
+```
+/mcp__nortezh__deploy-stack
+```
+
+**`deploy-stack`** walks the whole thing end to end: pick or create the project, provision
+a database or disk, put connection details in an env group, create the deployment and poll
+until the deployer converges, attach a custom domain and route, and write a
+`.github/workflows/deploy-<name>.yaml` for continuous deploys.
+
+It checks what already exists at each stage, so it is safe to re-run on a half-built
+stack. All arguments are optional (`project`, `name`, `image`, `location`, `domain`,
+`repo`) — pass what you know, it asks for the rest as it goes.
+
+Two steps it deliberately hands back to you rather than doing itself: adding the DNS
+records a domain needs, and minting the service-account key the CI workflow authenticates
+with (service-account tools are not exposed here).
+
 ## Tools
 
 56 of the API's 98 routes — 30 read-only, 11 destructive, 15 plain writes.
