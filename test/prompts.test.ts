@@ -119,8 +119,8 @@ test('the service account setup comes before the GitHub secrets', () => {
   // Ordering matters: the secrets cannot be set until the key exists, and the workflow
   // must not be written until both are done.
   const text = deployStack!.render({})
-  const account = text.indexOf('Step 1 — the Nortezh service account')
-  const secrets = text.indexOf('Step 2 — put it in GitHub')
+  const account = text.indexOf('A Nortezh service account')
+  const secrets = text.indexOf('Three GitHub secrets')
   const workflow = text.indexOf('### Then write')
   assert.ok(account > 0 && secrets > account && workflow > secrets)
 })
@@ -220,6 +220,25 @@ test('the cname is read from domainGet, not written from memory', () => {
 
 test('Cloudflare proxy guidance is explicit', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /"DNS only" \(the grey cloud\), not "Proxied"/)
+  // The grey-cloud instruction rides along with the handoff itself, because getting it
+  // wrong wastes the whole DNS round trip. The reasoning stays in reserve.
+  assert.match(flat, /set each one to \*\*DNS only\*\* \(grey cloud\), not Proxied/)
   assert.match(flat, /Full \(strict\)/)
+})
+
+test('manual steps are handed over short, then waited on', () => {
+  // Front-loading the explanation buries the instruction. The rule is: say what to do,
+  // give the exact values, stop, and keep the reasoning for when it is actually needed.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Some steps are theirs, not yours/)
+  assert.match(flat, /as a short numbered list\. Three or four steps, not a page/)
+  assert.match(flat, /Leave the explanation out/)
+  assert.match(flat, /Then stop and wait/)
+  assert.match(flat, /could they act on your message without reading anything else/)
+})
+
+test('the long-form detail is parked behind "keep in reserve"', () => {
+  const text = deployStack!.render({})
+  const reserves = [...text.matchAll(/Keep in reserve/g)]
+  assert.ok(reserves.length >= 2, 'expected the DNS and credential handoffs to both defer detail')
 })

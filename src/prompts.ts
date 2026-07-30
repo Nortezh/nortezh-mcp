@@ -72,6 +72,27 @@ more common request. **Creating a resource that already exists is a failure, not
 **3. There is no fixed sequence.** What follows is a dependency graph and a menu, not a
 checklist. Build the plan from the user's answers, show it, then execute only that.
 
+**4. Some steps are theirs, not yours — hand them over cleanly and stop.**
+
+Parts of this cannot be done through the API: adding DNS records, creating a service
+account and its key in the console, adding GitHub secrets, committing and pushing. When you
+reach one:
+
+- **Say plainly what they need to do**, as a short numbered list. Three or four steps, not
+  a page.
+- **Give the exact values** — the record, the secret name, the URL to open. Values are the
+  payload, not detail; without them the instruction is useless.
+- **Leave the explanation out.** Do not front-load why it works, what the alternatives are,
+  or what might go wrong. It buries the instruction, and most of the time none of it is
+  needed.
+- **Then stop and wait.** Do not continue on the assumption they did it. Ask them to confirm
+  when it is done.
+- **Keep the detail in reserve.** If they hit a problem, or ask, *then* give the specifics
+  for their situation. That is when it is useful and when they will actually read it.
+
+The test is simple: could they act on your message without reading anything else? If yes,
+send it. If it needs a paragraph of context first, you have written too much.
+
 And underneath all three: **understanding the user's project is the whole job.** Its
 architecture, its service components, and above all **how each service is configured** —
 that is what every resource you create is derived from. Get the shape of the system right
@@ -384,30 +405,34 @@ the CDN — it is the default for a reason and it works everywhere.
 - \`verification.ssl\` — DCV records for the certificate. \`pending: true\` means it has not
   been issued yet.
 
-**You cannot add these records.** Stop here, present them as a table — record type, name,
-value — and wait for the user to confirm they are live.
+**You cannot add these records — this is a handoff.** Give them the table and the one thing
+that will otherwise bite them, and nothing else:
 
-### If they use Cloudflare — and most people do
+> Add these records at your DNS provider:
+>
+> | type | name | value |
+> |---|---|---|
+> | … | … | … |
+>
+> On Cloudflare, set each one to **DNS only** (grey cloud), not Proxied.
+>
+> Tell me when they are live.
 
-Say this explicitly, because the defaults there will break the setup:
+Then stop and wait. Do not explain TLS termination, apex flattening or SSL modes unless
+something goes wrong.
 
-- Add each record from \`dnsConfig\` in **DNS › Records**.
-- ⚠️ **Set the proxy status to "DNS only" (the grey cloud), not "Proxied" (orange).** With
-  the proxy on, Cloudflare terminates TLS itself and Nortezh sees Cloudflare rather than the
-  visitor — which breaks certificate issuance and commonly produces redirect loops, because
-  Nortezh already redirects HTTP to HTTPS. Get it working grey first. If they want Cloudflare
-  in front afterwards, that is a deliberate second step and the SSL mode must be **Full
-  (strict)**, never Flexible.
-- The \`verification.ownership\` and \`verification.ssl\` records are TXT, which Cloudflare
-  never proxies — those just get added as-is.
-- ⚠️ At the **zone apex** (\`example.com\` rather than \`www.example.com\`) Cloudflare flattens
-  a CNAME automatically. That is fine and expected — do not tell them to use the \`ipv4\`
-  records instead unless the CNAME genuinely will not take.
-- Cloudflare's proxy also caches. If they turn it on later and then wonder why a deploy did
-  not take effect, that is the first thing to purge.
-
-For any other provider, the same records apply; only the UI differs. If they have a
-provider-specific quirk, ask rather than guessing.
+**Keep in reserve, for when they report a problem:**
+- Proxied (orange cloud) breaks certificate issuance and commonly causes redirect loops,
+  because Cloudflare terminates TLS itself while Nortezh also redirects HTTP to HTTPS. Grey
+  cloud first, always. If they want the proxy afterwards it is a deliberate second step, and
+  the SSL mode must be **Full (strict)**, never Flexible.
+- The ownership and DCV records are TXT, which Cloudflare never proxies — nothing to set.
+- At the zone apex Cloudflare flattens a CNAME automatically. Expected; do not switch them
+  to the \`ipv4\` records over it.
+- The proxy caches. If they enable it later and a deploy seems not to take effect, purge
+  first.
+- Other providers need the same records; only the UI differs. Ask about a provider-specific
+  quirk rather than guessing at one.
 
 **3. \`routeCreate\`** maps \`domain\` + \`path\` to the deployment (\`target\`).
 ⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
@@ -424,55 +449,52 @@ or deploy anything yet**, and those tools are not exposed here. So wire a normal
 Actions workflow: build and push the image, then deploy it with the official
 \`Nortezh/nortezh-action\`.
 
-### First, walk the user through the setup — they must do all of it
+### First, the setup — all of it is theirs to do
 
-**None of this is callable from here.** Service-account tools are deliberately not exposed,
-so you cannot check whether one exists, cannot create one, and cannot read a key. Ask, then
-wait for confirmation at each step. Do not write the workflow file until all of it is done —
-a workflow whose secrets do not exist yet fails on its first run and wastes a build.
+**None of it is callable from here.** Service-account tools are deliberately not exposed, so
+you cannot check whether one exists, create one, or read a key. Ask which registry they use
+first, since it changes what they need, then hand them the list.
 
-**Step 1 — the Nortezh service account.** This is the credential the deploy step uses. It
-must be a service account, not a login: user bearer tokens expire after 7 days, service
-account keys do not.
+Do not write the workflow file until they confirm it is done — a workflow whose secrets do
+not exist fails on its first run and wastes a build.
 
-Ask first: *do you already have a service account for this project?* Offer the real
-possibilities — an existing one they will reuse, or a new one — plus free text for a name.
+The handoff, roughly this short:
 
-- **If they do not have one:** in the Nortezh console, open this project's Service Accounts
-  and create one. It gets an email of the form \`<slug>@<project>.service-account.nortezh.com\`.
-- **If they do:** they still need a key if they do not have the value saved — keys are
-  created separately from the account.
-- Then create a key on that service account and copy the value. It is shown in full and is
-  never recoverable from anywhere else in a form you should paste around; treat it exactly
-  like a password.
-- ⚠️ Confirm the service account is a **member of this project**. If it is not, every call
-  it makes comes back \`PROJECT_NOT_FOUND\`, which reads like the project is missing rather
-  than like a permissions problem, and costs real time to diagnose.
+> Before I write the workflow, three things to set up:
+>
+> **1. A Nortezh service account.** In the console → this project → Service Accounts:
+> create one if you have not already, then create a key and copy the value. Check it is a
+> member of the project.
+>
+> **2. A registry the cluster can pull from.** For Google Artifact Registry: a Docker
+> repository, and a Google service account with Artifact Registry Writer plus a JSON key.
+>
+> **3. Three GitHub secrets**, in Settings → Secrets and variables → Actions:
+>
+> | secret | value |
+> |---|---|
+> | \`NORTEZH_SA_EMAIL\` | the service account email from step 1 |
+> | \`NORTEZH_SA_KEY\` | the key from step 1 |
+> | \`GOOGLE_CREDENTIALS\` | the whole JSON key from step 2 |
+>
+> Tell me when that is done and I will write the workflow.
 
-**Step 2 — put it in GitHub.** In the repo, *Settings → Secrets and variables → Actions →
-New repository secret*, add two:
+Also ask, if you do not already know them: the **Dockerfile path** and the **branch** that
+should trigger a deploy.
 
-| secret | value |
-|---|---|
-| \`NORTEZH_SA_EMAIL\` | the service account's email from step 1 |
-| \`NORTEZH_SA_KEY\` | the key value from step 1 |
-
-The workflow maps these into \`SA_AUTH_EMAIL\` / \`SA_AUTH_KEY\`, which is what
-\`Nortezh/nortezh-action\` reads. Keep the secret names as written unless the user wants
-otherwise — then change them in both places.
-
-**Step 3 — a container registry the cluster can pull from.** The house pattern is Google
-Artifact Registry, which needs:
-- an Artifact Registry Docker repository, e.g. \`asia-southeast1-docker.pkg.dev/<gcp-project>/<repo>\`
-- a **Google** service account (separate from the Nortezh one) with Artifact Registry Writer
-- a JSON key for it, stored as the GitHub secret **\`GOOGLE_CREDENTIALS\`** — the whole JSON
-
-Ask which registry they actually use. If it is GHCR or Docker Hub rather than Artifact
-Registry, the auth and login steps are different — adapt them instead of forcing this shape,
-and remember a private registry also needs a \`pullsecretCreate\` on the Nortezh side so the
-cluster can pull.
-
-**Step 4 — the Dockerfile path and the branch** that should trigger a deploy.
+**Keep in reserve, for when they ask or hit a problem:**
+- It has to be a service account, not their own login: user bearer tokens expire after 7
+  days, service account keys do not.
+- Keys are created separately from the account, so having an account is not having a key.
+  The value is shown in full at creation — treat it like a password.
+- ⚠️ If the service account is not a member of the project, every call it makes returns
+  \`PROJECT_NOT_FOUND\` — which reads like the project is missing rather than like a
+  permissions problem, and costs real time to diagnose.
+- The workflow maps the two Nortezh secrets into \`SA_AUTH_EMAIL\` / \`SA_AUTH_KEY\`, which is
+  what \`Nortezh/nortezh-action\` reads. Renaming the secrets means changing both places.
+- GHCR or Docker Hub instead of Artifact Registry: the auth and login steps differ — adapt
+  them rather than forcing this shape. A private registry also needs \`pullsecretCreate\` on
+  the Nortezh side so the cluster can pull.
 
 ### Then write \`.github/workflows/deploy-<name>.yaml\`
 
