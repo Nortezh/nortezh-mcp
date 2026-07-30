@@ -359,3 +359,45 @@ test('route readiness appears in the convergence table', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /\| route \| `routeGet` \|/)
 })
+
+const resources = PROMPTS.find((prompt) => prompt.name === 'resources')
+
+test('the resource model prompt exists and takes no arguments', () => {
+  assert.ok(resources !== undefined)
+  assert.deepEqual(resources.arguments, [])
+  assert.ok(resources.render({}).length > 5000)
+})
+
+test('the resource model covers every exposed resource', () => {
+  const text = resources!.render({})
+  for (const heading of [
+    '## Project', '## Cluster', '## Deployment', '## Revision', '## Env group',
+    '## Disk', '## Managed database', '## Pull secret', '## Domain', '## Route',
+  ]) {
+    assert.ok(text.includes(heading), `missing ${heading}`)
+  }
+})
+
+test('each resource states dependencies, readiness and mutability', () => {
+  const text = resources!.render({})
+  assert.ok(text.split('**Depends on:**').length - 1 >= 7, 'dependencies')
+  assert.ok(text.split('**Ready:**').length - 1 >= 8, 'readiness')
+  assert.ok(text.split('**Mutable:**').length - 1 >= 6, 'mutability')
+})
+
+test('the resource model does not contradict deploy-stack on the sharp facts', () => {
+  const model = resources!.render({}).replace(/\s+/g, ' ')
+  // Each of these was a confirmed error in deploy-stack at some point; the model must
+  // state the corrected version, or the two prompts will disagree in the same session.
+  assert.match(model, /Immutable: `type`/)
+  assert.match(model, /non-CDN domain is stored as success the moment it is created/)
+  assert.match(model, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
+  assert.match(model, /replaces the whole map/)
+  assert.match(model, /do not put real secrets in one/)
+  assert.match(model, /any number of deployments\*\* — a disk is not exclusive/)
+  assert.match(model, /no exposed tool returns one/)
+})
+
+test('deploy-stack points at the resource model', () => {
+  assert.match(deployStack!.render({}), /read the \*\*`resources`\*\* prompt/)
+})

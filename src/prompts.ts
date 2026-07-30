@@ -102,6 +102,10 @@ at a database that is not the one it uses, a config value that was actually a se
 
 Nothing below is worth doing until Stage A0 is done and the user has confirmed it.
 
+If at any point you are unsure what a resource actually *is* — what it depends on, whether
+it can still be changed, how you would know it is ready — read the **\`resources\`** prompt on
+this same server. It is the model; this is the procedure.
+
 ---
 
 # Stage A — Establish what is actually being asked
@@ -714,6 +718,203 @@ report the result. That is the moment the placeholder is replaced by their appli
 - **Never echo secrets in a summary.** Database passwords, basic-auth passwords, service
   account keys: say where you put them, not what they are.`
 
+const RESOURCE_MODEL = `Reference: what each Nortezh resource is, what it depends on, how you know it is ready,
+and what can still be changed after it exists.
+
+Read this when you are unsure what something *is* — as opposed to which call to make, which
+the tool schemas already describe. Every claim here was checked against the API source.
+
+## The dependency graph
+
+\`\`\`
+billing account ──▶ project ──┬──▶ deployment ──▶ route ──▶ (public traffic)
+   (not exposed)              │         ▲            ▲
+                              │         │            │
+                              ├──▶ env group ────────┤ domain
+                              ├──▶ disk ─────────────┘
+                              ├──▶ pull secret ──────┘
+                              └──▶ managed database
+                                      (independent; feeds config only)
+
+cluster / location ──▶ deployment, disk, database, domain, route
+\`\`\`
+
+Read an arrow as "must exist first". A route is the only thing that needs two parents — a
+domain and a deployment.
+
+⚠️ A **managed database is not connected to a deployment by the platform.** Nothing links
+them. The only connection is the values you copy from \`db*Get\` into the deployment's
+configuration, which means nothing stops a deployment pointing at a database that was
+deleted, or at the wrong one.
+
+## Project
+
+**Is** a tenancy boundary: billing, membership, and the namespace that resource names are
+unique within. Not one application — it holds **many** deployments, databases, disks, env
+groups and domains.
+
+- **Depends on:** an **active billing account**. \`projectCreate\` needs its \`billingId\`
+  (a UUID), and no exposed tool returns one, so **project creation is a handoff to the
+  console**, not something to attempt.
+- **Depended on by:** everything.
+- **Ready:** immediately. Synchronous.
+- **Mutable:** \`projectEdit\` changes the display name. The **slug is the identity** every
+  other call uses.
+- **Members:** \`projectAddMember\` takes an email. ⚠️ It accepts a \`role\` but does not
+  persist or enforce it — every member is equivalent except the single owner.
+
+## Cluster (a "location")
+
+**Is** a place to run things. Every deployment, disk, database, domain and route names one,
+and the value is the cluster's \`id\`.
+
+- **Ready:** always — you only ever list them.
+- **Carries three things you need:** the \`cpu\` and \`memory\` lists (resource requests must
+  be exact members of them), \`features\` (a capability hint, **not** the gate), and
+  \`isTrial\` (a property of the cluster, not of the caller's billing).
+- ⚠️ **A resource cannot move between locations.** Changing where something runs means
+  delete and recreate.
+
+## Deployment
+
+**Is** a running workload — the thing that actually serves your code.
+
+- **Depends on:** a project and a cluster. Optionally an env group, a disk, a pull secret.
+- **Depended on by:** routes (\`target: deployment://<name>\`).
+- **Ready:** \`deploymentGet\` until \`actionStatus\` is the **string** \`"success"\`. This is
+  the only resource that can report \`"failed"\`.
+- **Mutable:** almost everything, through \`deploymentDeploy\`, which always requires
+  \`project\`, \`location\`, \`name\` **and \`image\`** even for a one-field change.
+- ⚠️ **Immutable: \`type\`.** Written at create, never updated. A \`WebService\` cannot become
+  a \`Worker\` — delete and recreate.
+- ⚠️ **Destructive when omitted:** \`env\` (replaces the whole inline map),
+  \`mountDataSecretPaths\` (drops every secret-marked file's value), \`envGroups: []\`
+  (unlinks all groups; absent leaves them alone).
+- **Four shapes**, chosen by \`type\`: \`WebService\` (HTTP, gets a URL, the only one a route
+  can target), \`Worker\` (no ingress), \`CronJob\` (needs a \`schedule\`), \`InternalTCPService\`
+  (cluster-internal; needs a real \`port\` or it silently gets \`0\`).
+
+## Revision
+
+**Is** a numbered snapshot of a deployment's spec. Not a resource you create — every deploy
+makes one.
+
+- **Ready:** it is the deployment's readiness.
+- ⚠️ \`deploymentRollback\` rewinds \`deployments.revision\` to an earlier number. It does
+  **not** create a new revision, and it does **not** restore env-group links or \`type\`. A
+  partial undo.
+
+## Env group
+
+**Is** a named set of environment variables, shared by any deployment in the project that
+lists it. The right home for values several services need — a database URL, a queue address.
+
+- **Depends on:** a project.
+- **Depended on by:** deployments that list it in \`envGroups\`. ⚠️ \`envgroupDelete\` is
+  refused by a foreign key while any deployment still links it.
+- **Ready:** immediately. Synchronous.
+- **Mutable:** ⚠️ \`envgroupUpdate\` **replaces the whole map** — any key left out is deleted,
+  and omitting \`data\` empties the group. Read with \`envgroupGet\`, change, send it all back.
+  The **name is immutable** (lowercase, 3–27 chars).
+- ⚠️ **Plain text, never masked.** The API says outright: do not put real secrets in one.
+- ⚠️ **Baked at deploy time.** Editing a group does not change a running deployment until it
+  is redeployed.
+
+## Disk
+
+**Is** persistent storage, mounted into a deployment at a path.
+
+- **Depends on:** a project and a cluster. Gated on the **billing account's** disk feature —
+  a refusal is \`ACCESS_DENIED\`, not a cluster problem.
+- **Depended on by:** ⚠️ **any number of deployments** — a disk is not exclusive.
+  \`diskGet\` lists every deployment mounting it, and \`diskDelete\` fails \`DISK_IN_USE\` while
+  any does.
+- **Ready:** \`diskGet\` until \`actionStatus\` is the **number \`2\`**. No failure value — a
+  stuck disk sits at \`1\` forever.
+- **Mutable:** \`diskUpdate\` resizes. Location and name are fixed.
+- Mount with \`disk: {name, mountPath, subPath}\`; extra paths via \`extraDiskMountData\`. Send
+  both \`minReplica\` and \`maxReplica\` when a disk is attached.
+
+## Managed database (Postgres / Redis / Mongo)
+
+**Is** a provisioned database instance. Its connection details are the point.
+
+- **Depends on:** a project and a cluster whose \`cluster_enabled_features\` allow databases
+  — a different table from \`clusterList\`'s \`features\`, so that can look fine and the create
+  still fail with \`DATABASE_CLUSTER_NOT_SUPPORTED\`.
+- **Depended on by:** nothing structurally. See the warning in the graph above.
+- **Ready:** \`db*Get\` until \`actionStatus\` is the **number \`2\`** *and* \`host\` is non-empty.
+  \`host\` and \`port\` are empty strings until then. No failure value.
+- **Mutable:** essentially nothing. No resize, no password rotation. Getting it wrong means
+  create a new one and migrate.
+- ⚠️ **You supply the password at create**, and \`db*Get\` returns it in plain text forever.
+- **Sizes are bounded and required:** cpu **0.5–4** cores, memory **256–4096** MiB, plus
+  \`storageSize\` in MB.
+- ⚠️ **The engines return different fields.** Postgres: \`host, port, user, database,
+  password\`. Mongo: no \`database\`. Redis: no \`user\`, no \`database\`.
+
+## Pull secret
+
+**Is** registry credentials, so the cluster can pull a private image.
+
+- **Depends on:** a project and a cluster.
+- **Depended on by:** deployments naming it in \`pullSecret\`.
+- **Ready:** \`pullsecretGet\` — \`status\` is an integer, same shape as disk.
+- Needs \`serverUrl\`, \`username\`, \`password\`. \`pullsecretGet\` returns the credentials
+  decoded — intentionally, but it means anyone who can read the project can read them.
+
+## Domain
+
+**Is** a custom hostname registered to a project. Registering it does **not** route anything
+— that is what a route does.
+
+- **Depends on:** a project and a cluster.
+- **Depended on by:** routes.
+- **Ready:** ⚠️ **a non-CDN domain is stored as success the moment it is created**, with an
+  empty \`verification\` object. Nothing to verify, nothing to poll. Only \`cdn: true\` is
+  asynchronous.
+- **Mutable:** nothing. Delete and recreate.
+- \`cdn\` defaults to \`false\`. \`cdn: true\` is billing-feature-gated and rejected outright for
+  a trial account.
+- \`domainGet\`'s \`dnsConfig\` carries **one CNAME**; \`ipv4\` and \`ipv6\` are always empty. The
+  cname value differs by the \`cdn\` flag — always read it, never write one from memory.
+
+## Route
+
+**Is** the mapping that sends traffic for a domain and path to a deployment. The thing that
+actually makes a custom domain serve.
+
+- **Depends on:** a domain **and** a deployment, both existing, plus the project and cluster.
+- **Ready:** \`routeGet\` until \`status\` is the **number \`2\`**. No failure value.
+- **Mutable:** nothing — delete and recreate.
+- ⚠️ \`target\` is a **URI**: \`deployment://<name>\`. A bare name fails validation.
+- ⚠️ Only a \`WebService\` can be a target — anything else is \`CAN_MAP_ONLY_WEB_SERVICE\`.
+- \`path\` must start with \`/\`. Optional basic auth lives in \`config.basicAuth\`, and is
+  returned in plain text by \`routeGet\`.
+- Every deployment already has a working URL without any route at all — \`deploymentGet\`
+  returns it as \`url\`. Routes and domains are only for custom hostnames.
+
+## Service account (not exposed here)
+
+**Is** a non-expiring credential for programmatic access — what CI should authenticate with,
+since user tokens last 7 days.
+
+- Must be a **member of the project** or every call fails: \`PROJECT_NOT_FOUND\` on project,
+  database, disk, envgroup and route routes; \`DEPLOYMENT_PROJECT_ACCESS_DENIED\` on
+  deployment routes; \`FORBIDDEN\` on domain routes. All three mean the same thing.
+- Keys are created separately from the account, and are readable in full afterwards.
+- Creating one is a console handoff — these tools are deliberately not exposed.
+
+## Things that are true everywhere
+
+- **Names are unique within a project**, not globally.
+- **A domain error is HTTP 200 with \`ok:false\`.** The MCP layer already converts those to
+  tool errors — if a call errors, it really failed.
+- **Only a deployment can report failure.** Database, disk and route report a bare integer
+  \`1\` = pending, \`2\` = success, and have no failed value at all, so anything stuck sits at
+  \`1\` indefinitely. Bound the wait and report it.
+- **Nothing moves between projects or locations.** Both mean delete and recreate.`
+
 export const PROMPTS: PromptSpec[] = [
   {
     name: 'deploy-stack',
@@ -732,5 +933,12 @@ export const PROMPTS: PromptSpec[] = [
     // those would splice pieces of the template back into the output — including the
     // {{GIVEN}} token itself.
     render: (args) => DEPLOY_STACK.replace('{{GIVEN}}', () => given(args)),
+  },
+  {
+    name: 'resources',
+    description:
+      "Reference for Nortezh's resource model: what each resource is, what it depends on, how to tell it is ready, and what can still be changed after it exists.",
+    arguments: [],
+    render: () => RESOURCE_MODEL,
   },
 ]

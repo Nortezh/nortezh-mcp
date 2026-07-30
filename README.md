@@ -64,21 +64,27 @@ as such in the spec, so Claude asks before running them.
 The server ships a prompt, so it arrives with `claude mcp add` — nothing extra to install:
 
 ```
-/mcp__nortezh__deploy-stack
+/mcp__nortezh__deploy-stack     set up or change a stack, end to end
+/mcp__nortezh__resources       what each resource is and what it depends on
 ```
 
-**`deploy-stack`** walks the whole thing end to end: pick or create the project, provision
-a database or disk, put connection details in an env group, create the deployment and poll
-until the deployer converges, attach a custom domain and route, and write a
-`.github/workflows/deploy-<name>.yaml` for continuous deploys.
+**`deploy-stack`** covers the whole job, from reading your repo to continuous deploys. It
+starts by working out your service topology from `docker-compose.yml`, Dockerfiles and
+`.env.example`, then asks what you actually want — patch an existing deployment, add to a
+project, build from nothing, or just wire CI — and does only that.
 
-It checks what already exists at each stage, so it is safe to re-run on a half-built
-stack. All arguments are optional (`project`, `name`, `image`, `location`, `domain`,
+It takes inventory before proposing anything and offers what already exists first, so it is
+safe to re-run on a half-built stack and will not create a duplicate of something you
+have. All arguments are optional (`project`, `name`, `image`, `location`, `domain`,
 `repo`) — pass what you know, it asks for the rest as it goes.
 
-Two steps it deliberately hands back to you rather than doing itself: adding the DNS
-records a domain needs, and minting the service-account key the CI workflow authenticates
-with (service-account tools are not exposed here).
+Three steps it deliberately hands back to you rather than doing itself: creating a project
+(that needs a billing account UUID no exposed tool returns), adding the DNS record a domain
+needs, and minting the service-account key the CI workflow authenticates with.
+
+**`resources`** is the reference behind it: every resource's definition, what it depends on
+in both directions, how you tell it is ready — which differs for all four of deployment,
+database, disk and route — and what can still be changed after it exists.
 
 ## Tools
 
