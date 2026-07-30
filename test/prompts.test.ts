@@ -200,3 +200,26 @@ test('per-service configuration is treated as its own step', () => {
   assert.match(flat, /Addresses change when they leave compose/)
   assert.match(flat, /internalUrl/)
 })
+
+test('the domain cdn flag is asked about, with its real gating', () => {
+  // domain.go:116 — cdn defaults to false; cdn=true is billing-feature-gated and rejected
+  // outright for a trial account. Silently sending true fails for reasons that read like
+  // a permissions bug.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /`cdn: false` \(\*\*the default\*\*\)/)
+  assert.match(flat, /DOMAIN_TRIAL_BILLING_CANNOT_CREATE_CDN_DOMAIN/)
+})
+
+test('the cname is read from domainGet, not written from memory', () => {
+  // domain.go:433 — Get branches on x.CDN: a CDN domain gets cname.nortezh.com, a non-CDN
+  // domain gets its own cluster's cname. One hardcoded hostname breaks half the cases.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /The cname differs by `cdn` flag/)
+  assert.match(flat, /never write a hostname from memory/)
+})
+
+test('Cloudflare proxy guidance is explicit', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /"DNS only" \(the grey cloud\), not "Proxied"/)
+  assert.match(flat, /Full \(strict\)/)
+})

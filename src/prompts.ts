@@ -361,17 +361,61 @@ On \`"failed"\`, read \`logUrl\` and \`statusUrl\` from \`deploymentGet\` and re
 Every deployment already has a working URL; \`deploymentGet\` returns it as \`url\`. This
 section is only for a **custom** domain.
 
-1. \`domainCreate\`.
-2. \`domainGet\` returns what the user must add at their DNS provider:
-   - \`dnsConfig\` — \`cname\` / \`ipv4\` / \`ipv6\` records pointing at Nortezh
-   - \`verification.ownership\` — \`{type, name, value}\` proving they own it
-   - \`verification.ssl\` — DCV records; \`pending: true\` means the certificate is not issued
-   Present them as a table. **You cannot do this step for them** — stop, show the records,
-   wait for confirmation that they are live.
-3. \`routeCreate\` maps \`domain\` + \`path\` to the deployment (\`target\`).
-   ⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
-   domain nobody verified.
-4. Re-check \`domainGet\` until it verifies.
+**1. \`domainCreate\`.** Ask about \`cdn\` first — it defaults to \`false\` and it is not a
+detail you can change your mind about cheaply:
+
+- \`cdn: false\` (**the default**) — the domain points straight at the cluster. Nothing extra
+  is required, and deleting it later is immediate.
+- \`cdn: true\` — served through the Nortezh CDN. **Feature-gated**: the project's billing
+  account must have the \`cdn\` feature enabled, and a **trial billing account is rejected
+  outright** (\`DOMAIN_TRIAL_BILLING_CANNOT_CREATE_CDN_DOMAIN\`, or \`ACCESS_DENIED\` when the
+  feature is simply off). Deleting a CDN domain is asynchronous rather than immediate.
+
+Offer both plus the free-text escape, and recommend \`false\` unless the user says they want
+the CDN — it is the default for a reason and it works everywhere.
+
+**2. \`domainGet\`, then hand the records to the user.** It returns:
+
+- \`dnsConfig\` — the \`cname\` / \`ipv4\` / \`ipv6\` records that point the domain at Nortezh.
+  ⚠️ **The cname differs by \`cdn\` flag** — a CDN domain gets \`cname.nortezh.com\`, a non-CDN
+  domain gets its own cluster's cname. So read the value out of \`domainGet\`; never write a
+  hostname from memory or copy one from another domain.
+- \`verification.ownership\` — \`{type, name, value}\`, proving they own the domain.
+- \`verification.ssl\` — DCV records for the certificate. \`pending: true\` means it has not
+  been issued yet.
+
+**You cannot add these records.** Stop here, present them as a table — record type, name,
+value — and wait for the user to confirm they are live.
+
+### If they use Cloudflare — and most people do
+
+Say this explicitly, because the defaults there will break the setup:
+
+- Add each record from \`dnsConfig\` in **DNS › Records**.
+- ⚠️ **Set the proxy status to "DNS only" (the grey cloud), not "Proxied" (orange).** With
+  the proxy on, Cloudflare terminates TLS itself and Nortezh sees Cloudflare rather than the
+  visitor — which breaks certificate issuance and commonly produces redirect loops, because
+  Nortezh already redirects HTTP to HTTPS. Get it working grey first. If they want Cloudflare
+  in front afterwards, that is a deliberate second step and the SSL mode must be **Full
+  (strict)**, never Flexible.
+- The \`verification.ownership\` and \`verification.ssl\` records are TXT, which Cloudflare
+  never proxies — those just get added as-is.
+- ⚠️ At the **zone apex** (\`example.com\` rather than \`www.example.com\`) Cloudflare flattens
+  a CNAME automatically. That is fine and expected — do not tell them to use the \`ipv4\`
+  records instead unless the CNAME genuinely will not take.
+- Cloudflare's proxy also caches. If they turn it on later and then wonder why a deploy did
+  not take effect, that is the first thing to purge.
+
+For any other provider, the same records apply; only the UI differs. If they have a
+provider-specific quirk, ask rather than guessing.
+
+**3. \`routeCreate\`** maps \`domain\` + \`path\` to the deployment (\`target\`).
+⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
+domain nobody verified.
+
+**4. Re-check \`domainGet\`** until it verifies. If it stays unverified for more than a few
+minutes, the usual causes in order: the records were added to the wrong zone, Cloudflare's
+proxy is on, or DNS has simply not propagated yet.
 
 ## B5. Continuous deployment
 
