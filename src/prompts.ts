@@ -338,6 +338,12 @@ once that it will be readable in full, and move on.
   back. This is the same trap as \`env\` on a deployment, one level up.
 - Groups merge **in the order given**, later overriding earlier, and the deployment's own
   \`env\` / \`addEnv\` / \`removeEnv\` is overlaid last and always wins.
+- ⚠️ On a deployment, \`envGroups\` absent means **leave the current links alone**; \`[]\` means
+  **unlink every group**. Those are different, and sending an empty array to mean "no change"
+  silently strips the deployment's whole shared configuration. An unknown name fails with
+  \`DEPLOYMENT_ENV_GROUP_NOT_FOUND\`.
+- \`mountDataChanges\` is applied on top of \`mountData\`, so the two compose — secret paths
+  listed in \`mountDataSecretPaths\` still apply to keys set either way.
 - ⚠️ The merge is **baked into the revision at deploy time.** Editing a group afterwards does
   **not** change a running deployment — it needs another \`deploymentDeploy\` to pick the new
   values up. This is the single most common surprise here: the group looks updated, the app

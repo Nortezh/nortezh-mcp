@@ -287,3 +287,11 @@ test('envgroupUpdate is described as a wholesale replace', () => {
   assert.match(flat, /omitting `data` entirely empties the group/)
   assert.match(flat, /read the group with `envgroupGet` first/)
 })
+
+test('absent envGroups and empty envGroups are distinguished', () => {
+  // deployment.go:370-372 — nil leaves the links unchanged, [] clears them. Sending [] to
+  // mean "unchanged" strips the deployment's entire shared configuration.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /`envGroups` absent means \*\*leave the current links alone\*\*/)
+  assert.match(flat, /`\[\]` means \*\*unlink every group\*\*/)
+})
