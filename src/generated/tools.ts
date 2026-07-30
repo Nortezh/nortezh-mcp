@@ -321,7 +321,7 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "port": {
-          "description": "Port is required (or defaulted to 80) for a WebService; ignored for other types.",
+          "description": "Port defaults to 80 for a WebService and is ignored by Worker and CronJob.\n⚠ An InternalTCPService needs a real port and is stored with 0 when this is omitted, which\ndeploys successfully and then serves nothing.",
           "type": "integer"
         },
         "project": {
@@ -329,7 +329,7 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "protocol": {
-          "description": "Protocol only applies to WebService (Worker/CronJob must leave it none). Marshals as its name,\nnever as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_PROTOCOL. Omit the field to get the type's default (http for WebService,\nnone otherwise).",
+          "description": "Protocol applies only to WebService. ⚠ The enum below is the full set the type can marshal,\nbut validation accepts a NARROWER set per deployment type: a WebService takes only http or\nhttps (validProtocol), while Worker and CronJob must leave it unset or none. So none and h2c\nappear in the enum yet are rejected on a WebService with DEPLOYMENT_INVALID_PROTOCOL, as is an\nempty string on any type. Omit the field to get the type's default — http for WebService, none\notherwise — which is almost always what you want.",
           "type": "string",
           "enum": [
             "none",
@@ -366,7 +366,7 @@ export const TOOLS: ToolSpec[] = [
           }
         },
         "type": {
-          "description": "Type selects the workload shape and defaults to WebService when omitted (0). Marshals as its\nname, never as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_TYPE. The legacy numeric value 4 (\"TCPService\") is deprecated and can no\nlonger be created or referenced by name; it is not in the accepted set below.",
+          "description": "Type selects the workload shape and defaults to WebService when omitted (0). Marshals as its\nname, never as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_TYPE. The legacy numeric value 4 (\"TCPService\") is deprecated and can no\nlonger be created or referenced by name; it is not in the accepted set below.\n⚠ IMMUTABLE after creation: deployment.deploy never writes this column (see\nupdateDeployment), so a deployment created as a WebService stays one. Changing the type\nmeans deleting and recreating.",
           "type": "string",
           "enum": [
             "WebService",
@@ -641,7 +641,7 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "port": {
-          "description": "Port is required (or defaulted to 80) for a WebService; ignored for other types.",
+          "description": "Port defaults to 80 for a WebService and is ignored by Worker and CronJob.\n⚠ An InternalTCPService needs a real port and is stored with 0 when this is omitted, which\ndeploys successfully and then serves nothing.",
           "type": "integer"
         },
         "project": {
@@ -649,7 +649,7 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "protocol": {
-          "description": "Protocol only applies to WebService (Worker/CronJob must leave it none). Marshals as its name,\nnever as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_PROTOCOL. Omit the field to get the type's default (http for WebService,\nnone otherwise).",
+          "description": "Protocol applies only to WebService. ⚠ The enum below is the full set the type can marshal,\nbut validation accepts a NARROWER set per deployment type: a WebService takes only http or\nhttps (validProtocol), while Worker and CronJob must leave it unset or none. So none and h2c\nappear in the enum yet are rejected on a WebService with DEPLOYMENT_INVALID_PROTOCOL, as is an\nempty string on any type. Omit the field to get the type's default — http for WebService, none\notherwise — which is almost always what you want.",
           "type": "string",
           "enum": [
             "none",
@@ -686,7 +686,7 @@ export const TOOLS: ToolSpec[] = [
           }
         },
         "type": {
-          "description": "Type selects the workload shape and defaults to WebService when omitted (0). Marshals as its\nname, never as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_TYPE. The legacy numeric value 4 (\"TCPService\") is deprecated and can no\nlonger be created or referenced by name; it is not in the accepted set below.",
+          "description": "Type selects the workload shape and defaults to WebService when omitted (0). Marshals as its\nname, never as a number — sending an empty string or an unlisted name fails with\nDEPLOYMENT_INVALID_TYPE. The legacy numeric value 4 (\"TCPService\") is deprecated and can no\nlonger be created or referenced by name; it is not in the accepted set below.\n⚠ IMMUTABLE after creation: deployment.deploy never writes this column (see\nupdateDeployment), so a deployment created as a WebService stays one. Changing the type\nmeans deleting and recreating.",
           "type": "string",
           "enum": [
             "WebService",
@@ -968,7 +968,21 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "range": {
-          "type": "string"
+          "description": "Range accepts 1h, 6h, 12h or 24h for per-sample series over that lookback window, or the same\nvalues suffixed \"agg\" (1hagg, 6hagg, 12hagg, 24hagg) plus 7dagg and 30dagg for a longer window.\nThe set is closed — plausible-looking values like \"1d\", \"7d\" or \"30d\" fail validation.",
+          "type": "string",
+          "enum": [
+            "1h",
+            "6h",
+            "12h",
+            "24h",
+            "1hagg",
+            "6hagg",
+            "12hagg",
+            "24hagg",
+            "7dagg",
+            "30dagg"
+          ],
+          "example": "24h"
         }
       },
       "required": [
@@ -1442,8 +1456,20 @@ export const TOOLS: ToolSpec[] = [
           "type": "string"
         },
         "range": {
-          "description": "Range accepts 1h, 6h, 12h or 24h for per-sample series over that lookback window, or the same\nvalues suffixed \"agg\" (1hagg, 6hagg, 12hagg, 24hagg) plus 7dagg and 30dagg for a longer window.",
+          "description": "Range accepts 1h, 6h, 12h or 24h for per-sample series over that lookback window, or the same\nvalues suffixed \"agg\" (1hagg, 6hagg, 12hagg, 24hagg) plus 7dagg and 30dagg for a longer window.\nThe set is closed — plausible-looking values like \"1d\", \"7d\" or \"30d\" fail validation.",
           "type": "string",
+          "enum": [
+            "1h",
+            "6h",
+            "12h",
+            "24h",
+            "1hagg",
+            "6hagg",
+            "12hagg",
+            "24hagg",
+            "7dagg",
+            "30dagg"
+          ],
           "example": "24h"
         }
       },
@@ -2129,22 +2155,28 @@ export const TOOLS: ToolSpec[] = [
           "$ref": "#/$defs/api_route.RouteConfig"
         },
         "domain": {
+          "description": "Domain must already be registered to this project with domain.create — a route does\nnot create it.",
           "type": "string"
         },
         "location": {
           "type": "string"
         },
         "path": {
-          "type": "string"
+          "description": "Path must start with \"/\". Use \"/\" to route the whole host.",
+          "type": "string",
+          "example": "/"
         },
         "project": {
           "type": "string"
         },
         "skipDomainVerify": {
+          "description": "SkipDomainVerify bypasses the check that this project owns the domain. It exists for\ntests — setting it claims routing for a domain nobody has registered or verified.",
           "type": "boolean"
         },
         "target": {
-          "type": "string"
+          "description": "Target is a URI, NOT a bare deployment name: it must be \"deployment://<name>\", which\nis currently the only accepted scheme (validRouteTarget). Sending \"api\" instead of\n\"deployment://api\" fails with VALIDATE_ERROR \"target is invalid\". The deployment must\nbe a WebService (CAN_MAP_ONLY_WEB_SERVICE) and must already exist in this project and\nlocation.",
+          "type": "string",
+          "example": "deployment://api"
         }
       },
       "required": [
