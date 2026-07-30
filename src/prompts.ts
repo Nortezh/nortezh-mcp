@@ -291,23 +291,23 @@ checking whether the thing already exists.
 
 Get this wrong and you will either move on too early or wait forever.
 
-| resource | poll | ready when | fails when |
+The model above gives this per resource; here it is as one table, because getting it wrong
+means either moving on too early or waiting forever.
+
+| resource | poll | ready when | can fail? |
 |---|---|---|---|
-| deployment | \`deploymentGet\` | \`actionStatus\` is the **string** \`"success"\` | \`"failed"\` |
-| database | \`dbPostgresGet\` / \`dbRedisGet\` / \`dbMongoGet\` | \`actionStatus\` is the **number \`2\`**, and \`host\` is non-empty | **never** — there is no failure value |
-| disk | \`diskGet\` | \`actionStatus\` is the **number \`2\`** | **never** |
-| route | \`routeGet\` | \`status\` is the **number \`2\`** | **never** |
-| domain, non-CDN | — | **immediately**, at create | — |
-| domain, CDN | \`domainGet\` | \`status\` reports success | — |
+| deployment | \`deploymentGet\` | \`actionStatus\` is the **string** \`"success"\` | yes — \`"failed"\` |
+| database | \`dbPostgresGet\` / \`dbRedisGet\` / \`dbMongoGet\` | \`actionStatus\` is the **number \`2\`**, and \`host\` is non-empty | no |
+| disk | \`diskGet\` | \`actionStatus\` is the **number \`2\`** | no |
+| route | \`routeGet\` | \`status\` is the **number \`2\`** | no |
+| pull secret | \`pullsecretGet\` | \`status\` is the **number \`2\`** | no |
+| domain, non-CDN | — | **immediately**, at create | no |
+| domain, CDN | \`domainGet\` | \`status\` reports success | no |
+| project, env group | — | **immediately** | no |
 
-Only the deployment reports a **string**, and only the deployment can report failure.
-Database, disk and route \`actionStatus\`/\`status\` are bare integers — \`1\` = pending,
-\`2\` = success — with **no failed value at all**, so something that never provisions sits at
-\`1\` forever. Give those a bounded wait (a few minutes), then stop and tell the user rather
-than looping.
-
-A **non-CDN domain is not asynchronous at all**: it is stored as success the moment it is
-created. There is nothing to poll and nothing to wait for. See B4.
+Only the deployment reports a string, and only the deployment can fail. Everything else that
+is asynchronous sits at \`1\` indefinitely when it goes wrong — so bound those waits to a few
+minutes and then tell the user, rather than looping.
 
 Poll every few seconds, not faster.
 
@@ -503,19 +503,16 @@ the CDN — it is the default for a reason and it works everywhere.
 
 **2. \`domainGet\`, then hand the record to the user.**
 
-⚠️ **A non-CDN domain is stored as success the instant it is created, with an empty
-\`verification\` object.** There is no ownership check, no DCV, and nothing to poll — it is
-immediately usable by \`routeCreate\`. Do not tell the user to wait for verification, and do
-not present empty \`verification.ownership\` / \`verification.ssl\` fields as records to add.
-They are zero-valued because that path has no verification, not because it has not run yet.
+Two consequences of what the model says about domains, because both change what you send
+the user:
 
-\`dnsConfig\` gives you **one CNAME and nothing else** — \`ipv4\` and \`ipv6\` are always empty
-arrays, so there are no A/AAAA records to hand over. ⚠️ The value differs by \`cdn\` flag: a
-CDN domain gets \`cname.nortezh.com\`, a non-CDN domain gets its own cluster's cname. Read it
-out of \`domainGet\` every time; never write a hostname from memory or copy one from another
-domain.
+- A non-CDN domain has **no verification at all**, so do not present its empty
+  \`verification.ownership\` / \`verification.ssl\` fields as records to publish. They are
+  zero-valued because that path has none, not because it has not run yet.
+- \`dnsConfig\` carries **one CNAME**, so the handoff is one record — not a table of three.
+  Read the value from \`domainGet\`; it differs by \`cdn\` flag.
 
-The handoff is therefore one record:
+So the handoff is:
 
 > Point your domain at Nortezh with this DNS record:
 >
@@ -776,7 +773,10 @@ groups and domains.
 **Is** a place to run things. Every deployment, disk, database, domain and route names one,
 and the value is the cluster's \`id\`.
 
+- **Depended on by:** deployments, disks, databases, domains and routes — every one of them
+  names a location.
 - **Ready:** always — you only ever list them.
+- **Mutable:** not by you. A cluster is operator-managed; \`clusterList\` is the only route.
 - **Carries three things you need:** the \`cpu\` and \`memory\` lists (resource requests must
   be exact members of them), \`features\` (a capability hint, **not** the gate), and
   \`isTrial\` (a property of the cluster, not of the caller's billing).
@@ -807,10 +807,14 @@ and the value is the cluster's \`id\`.
 **Is** a numbered snapshot of a deployment's spec. Not a resource you create — every deploy
 makes one.
 
-- **Ready:** it is the deployment's readiness.
+- **Depends on:** a deployment. It has no independent existence and is deleted with it.
+- **Depended on by:** nothing. \`deploymentRollback\` names one by number.
+- **Ready:** it has no state of its own — the deployment's \`actionStatus\` is the answer.
+- **Mutable:** no. A revision is a fixed snapshot; deploying again makes a new one.
 - ⚠️ \`deploymentRollback\` rewinds \`deployments.revision\` to an earlier number. It does
   **not** create a new revision, and it does **not** restore env-group links or \`type\`. A
   partial undo.
+- \`deploymentLogRevision\` lists them, which is how you find a number to roll back to.
 
 ## Env group
 
@@ -866,8 +870,11 @@ lists it. The right home for values several services need — a database URL, a 
 **Is** registry credentials, so the cluster can pull a private image.
 
 - **Depends on:** a project and a cluster.
-- **Depended on by:** deployments naming it in \`pullSecret\`.
+- **Depended on by:** deployments naming it in \`pullSecret\`. Nothing stops you deleting one
+  a deployment still references — the next pull just fails.
 - **Ready:** \`pullsecretGet\` — \`status\` is an integer, same shape as disk.
+- **Mutable:** nothing. There is no update route; to rotate credentials, create a new one
+  and point the deployment at it, or delete and recreate under the same name.
 - Needs \`serverUrl\`, \`username\`, \`password\`. \`pullsecretGet\` returns the credentials
   decoded — intentionally, but it means anyone who can read the project can read them.
 
@@ -905,13 +912,21 @@ actually makes a custom domain serve.
 ## Service account (not exposed here)
 
 **Is** a non-expiring credential for programmatic access — what CI should authenticate with,
-since user tokens last 7 days.
+since user tokens last 7 days. It is a user row with an email of the form
+\`<slug>@<project>.service-account.nortezh.com\`, which is why it can be a project member.
 
-- Must be a **member of the project** or every call fails: \`PROJECT_NOT_FOUND\` on project,
-  database, disk, envgroup and route routes; \`DEPLOYMENT_PROJECT_ACCESS_DENIED\` on
-  deployment routes; \`FORBIDDEN\` on domain routes. All three mean the same thing.
-- Keys are created separately from the account, and are readable in full afterwards.
-- Creating one is a console handoff — these tools are deliberately not exposed.
+- **Depends on:** a project, and **membership of that project**. ⚠️ Without membership every
+  call fails with a code that reads like the resource is missing: \`PROJECT_NOT_FOUND\` on
+  project, database, disk, envgroup and route routes; \`DEPLOYMENT_PROJECT_ACCESS_DENIED\` on
+  deployment routes; \`FORBIDDEN\` on domain routes. All three mean the same thing here.
+- **Depended on by:** nothing in the platform — but any CI that authenticates with its key
+  breaks the moment it is deleted.
+- **Ready:** immediately. Synchronous.
+- **Mutable:** the account itself, no. Keys are added and revoked independently, up to 10
+  per account.
+- Keys are created separately from the account and are readable in full afterwards, so
+  having an account is not having a key.
+- **Creating one is a console handoff** — these tools are deliberately not exposed here.
 
 ## Things that are true everywhere
 

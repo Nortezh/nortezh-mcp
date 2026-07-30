@@ -215,8 +215,8 @@ test('the cname is read from domainGet, not written from memory', () => {
   // domain.go:433 — Get branches on x.CDN: a CDN domain gets cname.nortezh.com, a non-CDN
   // domain gets its own cluster's cname. One hardcoded hostname breaks half the cases.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /value differs by `cdn` flag/)
-  assert.match(flat, /never write a hostname from memory/)
+  assert.match(flat, /cname value differs by the `cdn` flag/)
+  assert.match(flat, /always read it, never write one from memory/)
 })
 
 test('Cloudflare proxy guidance is explicit', () => {
@@ -334,9 +334,9 @@ test('omitting mountDataSecretPaths is flagged as destructive', () => {
 test('a non-CDN domain is not described as needing verification', () => {
   // domain.go:116-126 — inserted StatusSuccess with verification '{}'.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /stored as success the instant it is created/)
-  assert.match(flat, /Do not tell the user to wait for verification/)
-  assert.match(flat, /`ipv4` and `ipv6` are always empty arrays/)
+  assert.match(flat, /stored as success the moment it is created/)
+  assert.match(flat, /no verification at all/)
+  assert.match(flat, /`ipv4` and `ipv6` are always empty/)
 })
 
 test('protocol is limited to http and https for a WebService', () => {
@@ -405,4 +405,50 @@ test('deploy-stack INLINES the resource model rather than pointing at it', () =>
   const text = deployStack!.render({})
   assert.ok(text.includes(resources!.render({})), 'the model is not embedded verbatim')
   assert.equal(text.includes('{{RESOURCE_MODEL}}'), false)
+})
+
+// Facts that were wrong in deploy-stack at some point and are now stated in the resource
+// model. The model is canonical: if a fact leaves it, the procedure is the only place it
+// lives and the next edit can contradict it silently — which is exactly how the original
+// twelve errors survived review.
+const CANONICAL_FACTS: Array<[string, RegExp]> = [
+  ['deployment type is immutable', /Immutable: `type`/],
+  ['env group update replaces', /replaces the whole map/],
+  ['env groups are not for secrets', /do not put real secrets in one/],
+  ['non-CDN domain needs no verification', /stored as success the moment it is created/],
+  ['dnsConfig is one CNAME', /`ipv4` and `ipv6` are always empty/],
+  ['route target is a URI', /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/],
+  ['route targets WebService only', /CAN_MAP_ONLY_WEB_SERVICE/],
+  ['disks are shared', /any number of deployments\*\* — a disk is not exclusive/],
+  ['db engines differ', /no `user`, no `database`/],
+  ['project creation is blocked', /no exposed tool returns one/],
+  ['rollback is partial', /does \*\*not\*\* create a new revision/],
+  ['deploy always needs image', /even for a one-field change/],
+]
+
+test('every sharp fact is stated in the resource model, not only in the procedure', () => {
+  // Flattened: the source wraps at 90 columns, so a fact can straddle a line break.
+  const model = resources!.render({}).replace(/\s+/g, ' ')
+  for (const [name, pattern] of CANONICAL_FACTS) {
+    assert.match(model, pattern, `the model no longer states: ${name}`)
+  }
+})
+
+test('every resource in the model answers the same questions', () => {
+  const model = resources!.render({})
+  const sections = model.split(/\n## /).slice(1)
+  const resourceSections = sections.filter(
+    (s) => !/^(The dependency graph|Things that are true)/.test(s),
+  )
+  assert.ok(resourceSections.length >= 11, 'expected at least 11 resource sections')
+
+  for (const section of resourceSections) {
+    const name = section.split('\n')[0]!.trim()
+    // Cluster is the one root with nothing above it, so it has no dependencies to state.
+    if (!name.startsWith('Cluster')) {
+      assert.match(section, /\*\*Depends on:\*\*/, `${name} does not state its dependencies`)
+    }
+    assert.match(section, /\*\*Ready:\*\*/, `${name} does not state readiness`)
+    assert.match(section, /\*\*Mutable:\*\*/, `${name} does not state mutability`)
+  }
 })
