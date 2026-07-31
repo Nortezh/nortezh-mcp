@@ -747,6 +747,22 @@ test('the pull secret is handed to the user, never created', () => {
   assert.match(flat, /a placeholder deploy never needs a pull secret/)
 })
 
+test('a withheld tool is never resolved by making something public', () => {
+  // Observed for real: with pullsecretCreate gone, a model concluded "make the GHCR package
+  // public after first push, so no pull secret is needed". Removing a capability creates
+  // pressure to route around it, and publishing is the cheapest route — it trades a console
+  // step for permanently exposing every layer, build arg and baked-in file of the image.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /never route around the missing tool by weakening something else/i)
+  assert.match(flat, /\*\*Do not propose that, ever\*\*/)
+  assert.match(flat, /Registries are private by default and stay that way/)
+  assert.match(flat, /never to remove the thing that made it require permission/)
+  // The user's own image is private by default; "public needs no pull secret" is a fact
+  // about third-party images and must not read as a suggestion.
+  assert.match(flat, /\*\*The user's own application image\*\* — assume \*\*private\*\*/)
+  assert.match(flat, /not\*\* a suggestion to publish the user's own/)
+})
+
 test('pullsecretCreate is not an exposed tool', () => {
   // The structural half of rule 6. Instructing against it is weaker than not shipping it.
   assert.equal(TOOLS.some((tool) => tool.name === 'pullsecretCreate'), false)

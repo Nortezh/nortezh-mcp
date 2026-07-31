@@ -128,6 +128,19 @@ and if not, give the user numbered steps to create it themselves. Then stop and 
 for you", not "paste it and I will handle the rest". If the user volunteers one anyway, say
 plainly that it is now in the transcript and should be rotated.
 
+⚠️ **And never route around the missing tool by weakening something else.** The tempting
+move is: "I cannot create a pull secret, so let's make the GHCR package public and then none
+is needed." **Do not propose that, ever** — not for a package, a repository, a registry, or
+a bucket.
+
+It trades a 30-second console step for permanently publishing the application image: every
+layer, every build argument, every file copied in, any credential baked into it by mistake,
+and the fact that the service exists at all. Once pulled it cannot be unpublished.
+
+**Registries are private by default and stay that way.** If a step is blocked because you
+lack a capability, the answer is always to hand that step to the user — never to remove the
+thing that made it require permission.
+
 And underneath all six: **understanding the user's project is the whole job.** Its
 architecture, its service components, and above all **how each service is configured** —
 that is what every resource you create is derived from. Get the shape of the system right
@@ -674,10 +687,15 @@ once that it will be readable in full, and move on.
   List any secret paths in \`mountDataSecretPaths\` so \`deploymentGet\` censors them to \`***\`.
 - **Private registry — the pull secret is theirs to create, not yours.** Three steps, in
   order:
-  1. **Does the image even need one?** A public image (\`nginx\`, \`python\`, anything on Docker
-     Hub without auth, a public GHCR package) needs none, and naming a \`pullSecret\` that
-     does not exist fails the deploy. Placeholder images are public by definition, so the
-     placeholder deploy in 6.3 never needs one.
+  1. **Whose image is it?** That decides it, and the answer is not "whichever is easier".
+     - **Somebody else's** — \`nginx\`, \`python\`, an official base image, an already-public
+       package — needs no pull secret. Placeholder images are always in this group, so the
+       placeholder deploy in 6.3 never needs one. Naming a \`pullSecret\` that does not exist
+       fails the deploy, so do not add one here.
+     - **The user's own application image** — assume **private**. That is the default for a
+       GHCR package and for Artifact Registry, and it is the correct default. It needs a
+       pull secret.
+     ⚠️ Never resolve this by making the user's image public. See rule 6.
   2. **Does one already exist?** \`pullsecretList\` for that project and location. Names are
      unique per (project, location), so a secret in another location does not help. If one
      is there, reuse it by name — do not ask for credentials to make a second.
@@ -908,7 +926,7 @@ The handoff, roughly this short:
 > **2. A registry the cluster can pull from.** For Google Artifact Registry: a Docker
 > repository, and a Google service account with Artifact Registry Writer plus a JSON key.
 >
-> **3. A pull secret**, only if that registry is private. Console → this project →
+> **3. A pull secret**, since that registry is private. Console → this project →
 > Pull Secrets → Create, in the same location as the deployment. Send me the **name** you
 > gave it — never the password.
 >
@@ -922,9 +940,9 @@ The handoff, roughly this short:
 >
 > Tell me when that is done and I will write the workflow.
 
-Drop step 3 from that message when the registry is public — most placeholder and open-source
-images need no pull secret, and listing an irrelevant step makes the other three look
-optional too.
+Drop step 3 only when the image genuinely belongs to someone else and is already public —
+listing an irrelevant step makes the other three look optional too. Do **not** drop it by
+arranging for the user's own image to be public.
 
 Also ask, if you do not already know them: the **Dockerfile path** and the **branch** that
 should trigger a deploy.
@@ -1347,7 +1365,9 @@ lists it. The right home for values several services need.
   the project can read the credentials — and reading one puts them in the transcript. Prefer
   \`pullsecretList\`, which answers "does it exist" without that.
 - **Only private images need one.** Public images pull without any credential, so a
-  placeholder deploy never needs a pull secret.
+  placeholder deploy never needs a pull secret. ⚠️ That is a fact about third-party images,
+  **not** a suggestion to publish the user's own — see rule 6. Their application image is
+  private by default and stays private.
 
 ## Domain
 
