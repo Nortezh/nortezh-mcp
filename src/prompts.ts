@@ -699,29 +699,57 @@ once that it will be readable in full, and move on.
   2. **Does one already exist?** \`pullsecretList\` for that project and location. Names are
      unique per (project, location), so a secret in another location does not help. If one
      is there, reuse it by name — do not ask for credentials to make a second.
-  3. **Otherwise hand it over** using the block below, and **wait**. Once they confirm, pass
-     the name as \`pullSecret\` on the deployment.
+  3. **Otherwise hand it over — but ask which registry first.** The fields differ per
+     registry, and a handoff that lists all of them makes the user do the choosing, which is
+     the part they came to you to avoid. Give **one** registry's exact values, then **wait**.
 
-  The handoff, roughly this short:
+  Two things they have to do, in this order — the credential does not exist yet, and the
+  console form will ask for it. This is the GHCR shape; use the reserve below for others.
 
-  > Your image is in a private registry, so Nortezh needs credentials to pull it.
-  > Create those in the console — I deliberately cannot, because it would mean putting your
-  > registry password in this chat.
+  > Your image is in a private registry, so Nortezh needs credentials to pull it. You create
+  > these yourself — I cannot, because it would mean putting your registry password in this
+  > chat.
   >
-  > 1. Open the Nortezh console → this project → **Pull Secrets** → **Create**.
-  > 2. Fill in:
-  >    - **Name** — \`<a name you pick, e.g. ghcr>\`; I will reference this exact name
-  >    - **Location** — \`<the deployment's location>\`; it must match
-  >    - **Server URL** — \`<registry host, e.g. ghcr.io>\`
-  >    - **Username** — for GHCR your GitHub username; for Artifact Registry \`_json_key\`
-  >    - **Password** — for GHCR a personal access token with \`read:packages\`;
-  >      for Artifact Registry the whole service-account JSON key
-  > 3. Save, and tell me the **name** you used.
+  > **1. Make a token.** GitHub → Settings → Developer settings → Personal access tokens →
+  > **Tokens (classic)** → Generate new token. Tick **\`read:packages\`** and nothing else.
+  > Copy it now — GitHub shows it once.
   >
-  > Send me the name only — never the password.
+  > **2. Create the pull secret.** Nortezh console → project \`<slug>\` → **Pull Secrets** →
+  > **Create**:
+  >
+  > \`\`\`
+  >   Name         ghcr
+  >   Location     <the deployment's location — must match>
+  >   Server URL   ghcr.io
+  >   Username     <your GitHub username>
+  >   Password     the token from step 1
+  > \`\`\`
+  >
+  > **3. Tell me the name you used** — the name only, never the token.
 
-  Then stop. Do not continue on the assumption it exists; \`pullsecretList\` confirms it when
-  they say it is done.
+  Then stop. Do not continue on the assumption it exists: when they say it is done,
+  \`pullsecretList\` confirms it before you reference the name anywhere.
+
+  **Keep in reserve** — the other registries, and what to say when the pull still fails:
+
+  - **Google Artifact Registry.** Server URL is the *regional host* —
+    \`asia-southeast1-docker.pkg.dev\` — not the full repository path. Username is the literal
+    string \`_json_key\`. Password is the **entire** service-account JSON key, pasted whole,
+    braces and all. The account needs **Artifact Registry Reader** on that repository;
+    Writer is what CI pushes with and is not needed to pull.
+  - **Docker Hub.** Server URL \`https://index.docker.io/v1/\`. Username is the account name.
+    Password should be an **access token** (Account Settings → Security → New Access Token),
+    not the account password.
+  - **GHCR: token is right but the pull still fails.** \`read:packages\` authorises the token;
+    it does not grant that account access to the package. Check GitHub → the package →
+    Package settings → Manage access. A package published by a workflow in one repository
+    does not automatically grant anything to a different repository or user.
+  - **Use a classic PAT for GHCR.** Fine-grained token support for packages is limited and
+    inconsistent; classic tokens with \`read:packages\` are the reliable choice.
+  - **Wrong location is the silent one.** Names are unique per (project, location), so a
+    secret created in a different location does not apply — and the pull fails exactly as if
+    no secret existed, which sends people looking at the token instead.
+  - ⚠️ **Never offer to make the image public** to get past any of the above. See rule 6.
 
 ### 6.3 The deployment
 

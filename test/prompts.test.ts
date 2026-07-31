@@ -740,9 +740,15 @@ test('the pull secret is handed to the user, never created', () => {
   assert.match(flat, /Never create a pull secret\. Hand the user instructions instead/)
   assert.match(flat, /\*\*Never ask for a registry username, password, token or key\.\*\*/)
   assert.match(flat, /should be rotated/)
-  // And the handoff has to be actionable, not just a refusal.
-  assert.match(flat, /Pull Secrets\*\* → \*\*Create\*\*/)
-  assert.match(flat, /Send me the name only — never the password/)
+  // And the handoff has to be actionable, not just a refusal. The credential does not
+  // exist yet when the console form asks for it, so "make the token" has to be its own
+  // step — otherwise the instruction dead-ends at a field the user cannot fill.
+  assert.match(flat, /\*\*1\. Make a token\.\*\*/)
+  assert.match(flat, /Tokens \(classic\)\*\* → Generate new token/)
+  assert.match(flat, /\*\*2\. Create the pull secret\.\*\* Nortezh console/)
+  assert.match(flat, /Tell me the name you used\*\* — the name only, never the token/)
+  // Ask which registry before handing over, or the user does the choosing.
+  assert.match(flat, /ask which registry first/)
   // Public images need none; offering the step anyway makes the real ones look optional.
   assert.match(flat, /a placeholder deploy never needs a pull secret/)
 })
@@ -761,6 +767,20 @@ test('a withheld tool is never resolved by making something public', () => {
   // about third-party images and must not read as a suggestion.
   assert.match(flat, /\*\*The user's own application image\*\* — assume \*\*private\*\*/)
   assert.match(flat, /not\*\* a suggestion to publish the user's own/)
+})
+
+test('the pull secret handoff has reserve detail for other registries', () => {
+  // Rule 4 keeps the handoff itself to a few steps, which only works if the detail exists
+  // somewhere to draw on. Without it, "a token with read:packages" is a dead end for the
+  // registries that are not GHCR, and for the failures that look like a bad token but are
+  // not.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /_json_key/)
+  assert.match(flat, /Artifact Registry Reader/)
+  assert.match(flat, /https:\/\/index\.docker\.io\/v1\//)
+  // The two failures that do not look like what they are.
+  assert.match(flat, /does not grant that account access to the package/)
+  assert.match(flat, /Wrong location is the silent one/)
 })
 
 test('pullsecretCreate is not an exposed tool', () => {
