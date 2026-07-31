@@ -40,7 +40,7 @@ const DEPLOY_STACK = `You are working on an application stack on Nortezh using t
 
 {{GIVEN}}
 
-## The four rules that matter most
+## The six rules that matter most
 
 **1. Ask, do not assume — and always ask with choices.**
 
@@ -95,7 +95,40 @@ reach one:
 The test is simple: could they act on your message without reading anything else? If yes,
 send it. If it needs a paragraph of context first, you have written too much.
 
-And underneath all four: **understanding the user's project is the whole job.** Its
+**5. Never build or push a container image. CI does that, not you.**
+
+Do not run \`docker build\`, \`docker push\`, \`podman\`, \`nerdctl\`, or a Makefile or script
+target that wraps one. Not to "check the build works", not to get a real image sooner.
+
+A deployment is created with a **public placeholder image**, and the GitHub Actions workflow
+replaces it with the real one the first time it runs. That is the only route an image takes
+into Nortezh.
+
+- **A locally built image is not reachable.** It exists on one laptop. The cluster pulls from
+  a registry, so an image CI never pushed cannot be deployed at all — and one pushed by hand
+  skipped every check the workflow performs.
+- **Pushing by hand needs registry credentials**, which means they pass through this
+  conversation. Same reason as rule 6.
+
+If a real image already exists **in a registry** — a public image, or one an earlier CI run
+pushed — use it and skip the placeholder. "Already exists" means already pushed. It never
+means "I could build it".
+
+**6. Never create a pull secret. Hand the user instructions instead.**
+
+\`pullsecretCreate\` is deliberately not one of your tools, so this is not something you can
+do by accident. It takes \`serverUrl\`, \`username\` and \`password\` — the only way it could
+ever be called is if the user pasted live registry credentials into this conversation, where
+they would then sit in the transcript and in anything that logs it.
+
+So: work out **whether** a pull secret is needed at all, check whether one already exists,
+and if not, give the user numbered steps to create it themselves. Then stop and wait.
+
+⚠️ **Never ask for a registry username, password, token or key.** Not "so I can set it up
+for you", not "paste it and I will handle the rest". If the user volunteers one anyway, say
+plainly that it is now in the transcript and should be rotated.
+
+And underneath all six: **understanding the user's project is the whole job.** Its
 architecture, its service components, and above all **how each service is configured** —
 that is what every resource you create is derived from. Get the shape of the system right
 and the Nortezh calls are mechanical. Get it wrong and you will create real infrastructure
@@ -639,7 +672,38 @@ once that it will be readable in full, and move on.
 - Files rather than env vars: use \`mountDataChanges\`, a list of \`{key, type: "set"|"remove",
   value}\` where \`key\` is the file path. (\`mountData\` still works but is the older form.)
   List any secret paths in \`mountDataSecretPaths\` so \`deploymentGet\` censors them to \`***\`.
-- Private registry: \`pullsecretCreate\` first, then pass its name as \`pullSecret\`.
+- **Private registry — the pull secret is theirs to create, not yours.** Three steps, in
+  order:
+  1. **Does the image even need one?** A public image (\`nginx\`, \`python\`, anything on Docker
+     Hub without auth, a public GHCR package) needs none, and naming a \`pullSecret\` that
+     does not exist fails the deploy. Placeholder images are public by definition, so the
+     placeholder deploy in 6.3 never needs one.
+  2. **Does one already exist?** \`pullsecretList\` for that project and location. Names are
+     unique per (project, location), so a secret in another location does not help. If one
+     is there, reuse it by name — do not ask for credentials to make a second.
+  3. **Otherwise hand it over** using the block below, and **wait**. Once they confirm, pass
+     the name as \`pullSecret\` on the deployment.
+
+  The handoff, roughly this short:
+
+  > Your image is in a private registry, so Nortezh needs credentials to pull it.
+  > Create those in the console — I deliberately cannot, because it would mean putting your
+  > registry password in this chat.
+  >
+  > 1. Open the Nortezh console → this project → **Pull Secrets** → **Create**.
+  > 2. Fill in:
+  >    - **Name** — \`<a name you pick, e.g. ghcr>\`; I will reference this exact name
+  >    - **Location** — \`<the deployment's location>\`; it must match
+  >    - **Server URL** — \`<registry host, e.g. ghcr.io>\`
+  >    - **Username** — for GHCR your GitHub username; for Artifact Registry \`_json_key\`
+  >    - **Password** — for GHCR a personal access token with \`read:packages\`;
+  >      for Artifact Registry the whole service-account JSON key
+  > 3. Save, and tell me the **name** you used.
+  >
+  > Send me the name only — never the password.
+
+  Then stop. Do not continue on the assumption it exists; \`pullsecretList\` confirms it when
+  they say it is done.
 
 ### 6.3 The deployment
 
@@ -677,9 +741,15 @@ rollback.
 
 #### Creating a new one, when the image does not exist yet
 
-Normal when CI has never run: **create with a public placeholder image and correct it
-afterwards.** This validates the plumbing, the cluster, the resource sizes and the env
-wiring now, instead of after a ten-minute build fails on a typo.
+**This is the normal path, not a fallback.** Create with a public placeholder image; the
+GitHub Actions workflow from 6.5 pushes the real one and updates the deployment on its first
+run. You never build or push an image yourself (rule 5).
+
+It also gets the ordering right: the plumbing, the cluster, the resource sizes and the env
+wiring are all validated **now**, instead of after a ten-minute build fails on a typo.
+
+⚠️ **A placeholder must be a public image**, so the placeholder deploy never needs a pull
+secret. That comes later, with the real image, and only if its registry is private (6.2).
 
 ⚠️ **The placeholder is the image, and only the image.** \`type\` cannot be changed later, so
 set the real one at create. \`nginx:latest\` only makes sense as a placeholder for a
@@ -690,11 +760,14 @@ problem to debug.
 1. \`deploymentCreate\` with the **real** \`type\`, \`port\` and \`schedule\`, and a placeholder
    \`image\`. Say which value is temporary.
 2. Wait for \`actionStatus: "success"\`.
-3. \`deploymentDeploy\` with the real image once CI has pushed one — plus env groups, disk
-   mount, replicas and resources.
-4. Wait again.
+3. Wire CI (6.5) and have the user push. **The workflow deploys the real image** — you do
+   not need to call \`deploymentDeploy\` for the image at all. Call it only for the things
+   the workflow does not set: env groups, disk mount, replicas, resources.
+4. Wait again, and report.
 
-If the real image already exists, skip the placeholder entirely.
+If a real image **already exists in a registry** — a public image, or one an earlier CI run
+pushed — use it at step 1 and skip the placeholder. ⚠️ "Already exists" means already
+pushed. A Dockerfile in the repo is not an image, and building it is rule 5.
 
 Field rules worth knowing before you send anything:
 
@@ -826,7 +899,7 @@ not exist fails on its first run and wastes a build.
 
 The handoff, roughly this short:
 
-> Before I write the workflow, three things to set up:
+> Before I write the workflow, a few things to set up:
 >
 > **1. A Nortezh service account.** In the console → this project → Service Accounts:
 > create one if you have not already, then create a key and copy the value. Check it is a
@@ -835,15 +908,23 @@ The handoff, roughly this short:
 > **2. A registry the cluster can pull from.** For Google Artifact Registry: a Docker
 > repository, and a Google service account with Artifact Registry Writer plus a JSON key.
 >
-> **3. Three GitHub secrets**, in Settings → Secrets and variables → Actions:
+> **3. A pull secret**, only if that registry is private. Console → this project →
+> Pull Secrets → Create, in the same location as the deployment. Send me the **name** you
+> gave it — never the password.
 >
-> | secret | value |
-> |---|---|
-> | \`NORTEZH_SA_EMAIL\` | the service account email from step 1 |
-> | \`NORTEZH_SA_KEY\` | the key from step 1 |
-> | \`GOOGLE_CREDENTIALS\` | the whole JSON key from step 2 |
+> **4. Three GitHub secrets**, in Settings → Secrets and variables → Actions:
+>
+> \`\`\`
+>   NORTEZH_SA_EMAIL    the service account email from step 1
+>   NORTEZH_SA_KEY      the key from step 1
+>   GOOGLE_CREDENTIALS  the whole JSON key from step 2
+> \`\`\`
 >
 > Tell me when that is done and I will write the workflow.
+
+Drop step 3 from that message when the registry is public — most placeholder and open-source
+images need no pull secret, and listing an irrelevant step makes the other three look
+optional too.
 
 Also ask, if you do not already know them: the **Dockerfile path** and the **branch** that
 should trigger a deploy.
@@ -861,8 +942,8 @@ should trigger a deploy.
 - The workflow maps the two Nortezh secrets into \`SA_AUTH_EMAIL\` / \`SA_AUTH_KEY\`, which is
   what \`Nortezh/nortezh-action\` reads. Renaming the secrets means changing both places.
 - GHCR or Docker Hub instead of Artifact Registry: the auth and login steps differ — adapt
-  them rather than forcing this shape. A private registry also needs \`pullsecretCreate\` on
-  the Nortezh side so the cluster can pull.
+  them rather than forcing this shape. A private registry also needs a pull secret on the
+  Nortezh side so the cluster can pull — **which the user creates, not you** (6.2).
 
 #### Then write \`.github/workflows/deploy-<name>.yaml\`
 
@@ -942,7 +1023,8 @@ Notes on that file, so you can adapt it rather than copy it blindly:
 - The image tag is computed **once**, in the \`image\` step, exposed as a job output, and
   consumed by both the build tag and the deploy input. That is what stops the two drifting
   apart — never write the registry path twice.
-- \`pull_secret\` names a pull secret that must already exist in Nortezh (\`pullsecretCreate\`).
+- \`pull_secret\` names a pull secret that must **already exist** in Nortezh, created by the
+  user (6.2) — confirm it with \`pullsecretList\` before writing the name here.
   **Omit the line entirely** if the registry is public or the deployment has no pull secret;
   naming one that does not exist fails the deploy.
 - \`port\` and \`type\` must match what 6.3 deployed. A \`Worker\` or \`CronJob\` takes no port.
@@ -1256,9 +1338,16 @@ lists it. The right home for values several services need.
 - **Ready:** \`pullsecretGet\` — \`status\` is the **number \`2\`**, same shape as disk.
 - **Mutable:** nothing; there is no update route. Rotate by creating another.
 - ⚠️ Names are unique per **(project, location)** — the same name can exist twice in one
-  project, in different locations.
-- Needs \`serverUrl\`, \`username\`, \`password\`. \`pullsecretGet\` returns them decoded, so
-  anyone who can read the project can read the credentials.
+  project, in different locations. A secret in the wrong location will not be found.
+- ⚠️ **Creating one is a user handoff.** \`pullsecretCreate\` is deliberately not exposed:
+  it takes \`serverUrl\`, \`username\` and \`password\`, so calling it would mean live registry
+  credentials passing through the conversation. You can list, read and delete them; the user
+  creates them in the console. See rule 6.
+- ⚠️ \`pullsecretGet\` returns \`username\` and \`password\` **decoded**, so anyone who can read
+  the project can read the credentials — and reading one puts them in the transcript. Prefer
+  \`pullsecretList\`, which answers "does it exist" without that.
+- **Only private images need one.** Public images pull without any credential, so a
+  placeholder deploy never needs a pull secret.
 
 ## Domain
 

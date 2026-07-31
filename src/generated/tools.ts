@@ -2009,56 +2009,6 @@ export const TOOLS: ToolSpec[] = [
     ]
   },
   {
-    "name": "pullsecretCreate",
-    "route": "pullsecret.create",
-    "description": "Create a pull secret\nMay fail with: PULL_SECRET_NAME_ALREADY_EXISTS, CLUSTER_NOT_FOUND, PROJECT_NOT_FOUND, VALIDATE_ERROR.",
-    "inputSchema": {
-      "type": "object",
-      "properties": {
-        "location": {
-          "type": "string",
-          "example": "th-1"
-        },
-        "name": {
-          "type": "string",
-          "example": "my-registry-cred"
-        },
-        "password": {
-          "type": "string",
-          "example": "hunter2"
-        },
-        "project": {
-          "type": "string",
-          "example": "my-project"
-        },
-        "serverUrl": {
-          "type": "string",
-          "example": "https://registry.example.com"
-        },
-        "username": {
-          "type": "string",
-          "example": "my-registry-user"
-        }
-      },
-      "required": [
-        "location",
-        "name",
-        "password",
-        "project",
-        "serverUrl",
-        "username"
-      ]
-    },
-    "readOnly": false,
-    "destructive": false,
-    "errorCodes": [
-      "PULL_SECRET_NAME_ALREADY_EXISTS",
-      "CLUSTER_NOT_FOUND",
-      "PROJECT_NOT_FOUND",
-      "VALIDATE_ERROR"
-    ]
-  },
-  {
     "name": "pullsecretDelete",
     "route": "pullsecret.delete",
     "description": "Delete a pull secret\nMay fail with: PULL_SECRET_NOT_FOUND, PROJECT_NOT_FOUND, VALIDATE_ERROR.",

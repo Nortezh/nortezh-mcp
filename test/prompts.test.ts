@@ -66,6 +66,15 @@ test('the placeholder is always substituted', () => {
   }
 })
 
+/**
+ * Tool ids the prompts name deliberately to say they are NOT available.
+ *
+ * Withholding a tool only works if the prompt explains why, otherwise the next reader adds
+ * it back. So "pullsecretCreate is deliberately not one of your tools" has to be sayable
+ * without the existence check below treating it as an instruction to call it.
+ */
+const WITHHELD_TOOLS = new Set(['pullsecretCreate'])
+
 test('every tool the prompt instructs the model to call actually exists', () => {
   // The prompt names tools in prose, so a rename or an allowlist change could leave it
   // telling the model to call something that is not there.
@@ -74,6 +83,7 @@ test('every tool the prompt instructs the model to call actually exists', () => 
 
   const referenced = [...text.matchAll(/`([a-z][A-Za-z]+)`/g)]
     .map((match) => match[1] as string)
+    .filter((candidate) => !WITHHELD_TOOLS.has(candidate))
     // Only check things that look like our tool ids and are plausibly meant as calls.
     .filter((candidate) => /^(project|deployment|disk|db|envgroup|route|domain|pullsecret|cluster|auth)[A-Z]/.test(candidate))
     // Field names share the prefix-plus-capital shape (projectSlug, deploymentId). Only
@@ -705,10 +715,45 @@ test('deploymentGet.url is not described as always working', () => {
 
 test('the rules heading counts the rules that are actually there', () => {
   const text = deployStack!.render({})
-  assert.match(text, /## The four rules that matter most/)
-  assert.match(text, /\*\*4\. /)
-  assert.equal(/\n\*\*5\. /.test(text), false)
-  assert.match(text, /And underneath all four:/)
+  assert.match(text, /## The six rules that matter most/)
+  assert.match(text, /\*\*6\. /)
+  assert.equal(/\n\*\*7\. /.test(text), false)
+  assert.match(text, /And underneath all six:/)
+})
+
+test('images are never built locally — CI owns them', () => {
+  // A locally built image lives on one laptop; the cluster pulls from a registry, so it
+  // cannot be deployed at all. Pushing it by hand needs registry credentials, which is the
+  // same exposure as creating a pull secret.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Never build or push a container image\. CI does that, not you/)
+  assert.match(flat, /Do not run `docker build`/)
+  assert.match(flat, /"Already exists" means already pushed/)
+  // The placeholder path has to read as the default, not as a workaround.
+  assert.match(flat, /\*\*This is the normal path, not a fallback\.\*\*/)
+})
+
+test('the pull secret is handed to the user, never created', () => {
+  // pullsecretCreate takes serverUrl/username/password, so the only way to call it is for
+  // the user to paste live registry credentials into the conversation.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Never create a pull secret\. Hand the user instructions instead/)
+  assert.match(flat, /\*\*Never ask for a registry username, password, token or key\.\*\*/)
+  assert.match(flat, /should be rotated/)
+  // And the handoff has to be actionable, not just a refusal.
+  assert.match(flat, /Pull Secrets\*\* → \*\*Create\*\*/)
+  assert.match(flat, /Send me the name only — never the password/)
+  // Public images need none; offering the step anyway makes the real ones look optional.
+  assert.match(flat, /a placeholder deploy never needs a pull secret/)
+})
+
+test('pullsecretCreate is not an exposed tool', () => {
+  // The structural half of rule 6. Instructing against it is weaker than not shipping it.
+  assert.equal(TOOLS.some((tool) => tool.name === 'pullsecretCreate'), false)
+  // The read and delete routes stay — none of them takes a credential as input.
+  for (const name of ['pullsecretList', 'pullsecretGet', 'pullsecretDelete']) {
+    assert.ok(TOOLS.some((tool) => tool.name === name), `${name} should still be exposed`)
+  }
 })
 
 test('the model does not claim the API annotation contradicts it', () => {

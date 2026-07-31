@@ -45,6 +45,17 @@ rather than stylistic:
   including the ones people delete as noise: `Explicitly not doing`, `Not done`, `To undo`.
   A report that silently omits what did not run reads as success.
 
+A third property is enforced by the **allowlist**, not the prompt: `pullsecretCreate` is
+withheld. Its inputs are a registry `serverUrl`, `username` and `password`, so exposing it
+means the credentials have to travel through the conversation to reach it. Instructing the
+model not to call a tool it has is weaker than not shipping the tool — the prompt explains
+the reasoning so the next person does not add it back, and `WITHHELD_TOOLS` in
+`test/prompts.test.ts` lets the prompt name it without the existence check objecting.
+
+The same logic covers images: the prompt forbids `docker build` / `docker push` outright.
+A locally built image cannot be deployed (the cluster pulls from a registry) and pushing one
+by hand needs the same credentials. CI owns images; deployments start on a public placeholder.
+
 Output goes to a **terminal**, not a markdown viewer, so the templates use fenced blocks
 rather than pipe tables, and emoji chips only on plain lines — never inside the box-drawing
 diagram, where a double-width glyph breaks the boxes. The prompt's own tables are reference
@@ -83,7 +94,7 @@ npm run generate && npm test
 reviewer can see exactly what the tool surface became.
 
 **Keep the set curated.** Every tool's schema is paid for in context on every request —
-the current 56 cost ~9k tokens, and `npm run generate` prints the figure each run. Model
+the current 55 cost ~10k tokens, and `npm run generate` prints the figure each run. Model
 tool-selection degrades well before the full 98.
 
 `operationId` values become MCP tool names and are effectively permanent — renaming one

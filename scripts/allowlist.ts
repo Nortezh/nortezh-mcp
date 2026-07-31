@@ -2,7 +2,7 @@
 //
 // Deliberately a curated subset, not everything. Model tool-selection degrades well
 // before 98 tools, and every tool's schema is paid for in context on every single
-// request — the current 56 cost roughly 10k tokens. Add an id here and re-run
+// request — the current 55 cost roughly 10k tokens. Add an id here and re-run
 // `npm run generate`; the schema, the required[] and the safety hints all come from the
 // spec, so there is nothing else to write.
 //
@@ -66,7 +66,13 @@ export const STORAGE_AND_DATA = [
   'dbMongoDelete',
   'dbMongoGet',
   'dbMongoList',
-  'pullsecretCreate',
+  // pullsecretCreate is deliberately NOT here. Creating one takes serverUrl, username and
+  // password — so exposing the tool means the only way to reach it is for the user to paste
+  // live registry credentials into the conversation, where they are then stored and logged.
+  // Withholding the tool is what makes that impossible rather than merely discouraged; the
+  // prompt hands the user step-by-step console instructions instead.
+  //
+  // Delete, get and list stay: none of them needs a credential as input.
   'pullsecretDelete',
   'pullsecretGet',
   'pullsecretList',

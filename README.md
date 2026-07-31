@@ -1,7 +1,7 @@
 # nortezh-mcp
 
 Manage Nortezh by prompt. An [MCP](https://modelcontextprotocol.io) server that gives
-Claude 56 tools over the Nortezh user API — projects, deployments, disks, managed
+Claude 55 tools over the Nortezh user API — projects, deployments, disks, managed
 databases, routes and domains.
 
 Runs **locally**. Your token stays on your machine; nothing is deployed.
@@ -87,12 +87,18 @@ runs as seven fixed steps:
 **Nothing is created, changed or deleted before step 5.** Steps 1–4 use read-only tools
 only, so it is safe to run it just to see what it would propose.
 
+**It never builds a container image.** New deployments are created with a public placeholder
+image, and the GitHub Actions workflow it writes replaces that with the real one on its first
+run. An image built on your laptop cannot be deployed anyway — the cluster pulls from a
+registry — and pushing one by hand would mean registry credentials going through the chat.
+
 It offers what already exists ahead of creating anything, so re-running it on a half-built
 stack will not duplicate what you have. All arguments are optional (`project`, `name`,
 `image`, `location`, `domain`, `repo`) — pass what you know, it asks for the rest.
 
-Two steps it deliberately hands back to you rather than doing itself: adding the DNS record
-a domain needs, and minting the service-account key the CI workflow authenticates with.
+Three steps it deliberately hands back to you rather than doing itself: adding the DNS
+record a domain needs, minting the service-account key the CI workflow authenticates with,
+and creating a pull secret if your registry is private.
 (Creating a project it can do — `projectCreate` needs a billing account UUID, which
 `projectGet` returns for any project you already have. Only your very first one has to come
 from the console.)
@@ -108,17 +114,22 @@ prompt, so a cross-reference would be advice the model could not act on.)
 
 ## Tools
 
-56 of the API's 98 routes — 30 read-only, 11 destructive, 15 plain writes.
+55 of the API's 98 routes — 30 read-only, 11 destructive, 14 plain writes.
 
 | group | tools |
 |---|---|
 | core | `authMe`, `clusterList`, projects (6), deployments (11), env groups (5) |
-| storage | disks (7), Postgres/Redis/Mongo (12), pull secrets (4) |
+| storage | disks (7), Postgres/Redis/Mongo (12), pull secrets (3) |
 | networking | routes (4), custom domains (5) |
 
 Not included: billing, service accounts, GitHub/CI-CD, network policies, phone OTP,
 payment channels. The set is curated because every tool's schema costs context on every
 request — see [DEVELOPMENT.md](./DEVELOPMENT.md) to add one.
+
+> ⚠️ **`pullsecretCreate` is withheld on purpose.** It takes a registry `serverUrl`,
+> `username` and `password`, so the only way to call it is to paste live registry credentials
+> into the conversation. `deploy-stack` gives you console steps instead and asks only for the
+> secret's *name*. Listing, reading and deleting pull secrets are all still available.
 
 > ⚠️ `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` return the database password in plain
 > text and pass it through unmodified. That is what lets Claude build a connection string,
