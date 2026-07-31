@@ -467,12 +467,151 @@ test('every resource in the model answers the same questions', () => {
 })
 
 // ---------------------------------------------------------------------------------------
+// The seven-step flow.
+//
+// The spine of the prompt: nothing mutating may happen before the user approves a written
+// plan, and the report must describe what ran rather than what was planned.
+// ---------------------------------------------------------------------------------------
+
+const STEPS = [
+  '## Step 1 — Take the request',
+  '## Step 2 — Ask which project',
+  '## Step 3 — The loop',
+  '## Step 4 — Write the plan',
+  '## Step 5 — Get explicit approval',
+  '## Step 6 — Execute the plan',
+  '## Step 7 — Report what actually happened',
+]
+
+test('the seven steps appear once each, in order', () => {
+  const text = deployStack!.render({})
+  let previous = -1
+  for (const step of STEPS) {
+    const at = text.indexOf(step)
+    assert.ok(at > previous, `${step} is missing or out of order`)
+    assert.equal(text.indexOf(step, at + 1), -1, `${step} appears more than once`)
+    previous = at
+  }
+})
+
+test('the project question is unconditional and comes before the work', () => {
+  // The slug rides on every later call. Guessing it builds a correct stack in the wrong
+  // tenancy — and the request naming a project is not the same as the user confirming it.
+  const text = deployStack!.render({})
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*Always ask, every run, before anything else\.\*\*/)
+  assert.match(flat, /Nothing else happens until this is answered/)
+  assert.ok(text.indexOf(STEPS[1]!) < text.indexOf(STEPS[2]!))
+})
+
+test('the loop will not exit while anything is unresolved', () => {
+  // "probably 8080" is how a plan acquires a value nobody chose. The exit condition has to
+  // be stated as absolute, or the model satisfies it by lowering its own bar.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /no unknowns, no assumptions, no guesses/)
+  assert.match(flat, /If you cannot cite where a value came from/)
+  assert.match(flat, /It is a loop, not a sequence/)
+})
+
+test('step 5 is a hard gate that read-only tools alone may precede', () => {
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*Steps 1 to 5 change nothing\*\* — read-only tools only/)
+  assert.match(flat, /you may call read-only tools and nothing else/)
+  assert.match(flat, /Silence is not approval/)
+  // An amendment agreed in chat must go back into the document, or the approved artifact
+  // and the executed one are different things.
+  assert.match(flat, /the approved artifact and the thing you execute must be the same/)
+})
+
+test('the plan template carries a section per resource kind', () => {
+  const text = deployStack!.render({})
+  const start = text.indexOf('### The plan template')
+  const end = text.indexOf('### End of the plan template')
+  assert.ok(start > 0 && end > start, 'the plan template is not delimited')
+  const template = text.slice(start, end)
+
+  for (const section of [
+    '## Your project, as I understand it',
+    '## Overview',
+    '## Databases',
+    '## Config',
+    '## Deployments',
+    '## Domains',
+    '## Routes',
+    '## Order and waiting',
+    '## Steps only you can do',
+    '## Risks',
+    '## Explicitly not doing',
+  ]) {
+    assert.ok(template.includes(section), `the plan template is missing ${section}`)
+  }
+  assert.match(template, /Unresolved: none\./)
+  assert.match(template, /\*\*Approve to run exactly this\*\*/)
+})
+
+test('the report template is built from what ran, not from the plan', () => {
+  const text = deployStack!.render({})
+  const start = text.indexOf('### The report template')
+  const end = text.indexOf('### End of the report template')
+  assert.ok(start > 0 && end > start, 'the report template is not delimited')
+  const template = text.slice(start, end)
+
+  for (const section of ['## Still yours', '## Not done', '## To undo']) {
+    assert.ok(template.includes(section), `the report template is missing ${section}`)
+  }
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /built from \*\*what actually ran\*\*, never from the plan/)
+  assert.match(flat, /A silent omission reads as success/)
+  // Citing the check is what separates a claim from an audit trail, and the checks differ
+  // per resource — a deployment reports a string, a disk reports 2.
+  assert.match(flat, /\*\*State how you know\*\*/)
+})
+
+test('red is not overloaded between deletion and failure', () => {
+  // 🔴 already means delete. Reusing it for a failed step would make "deleted" and "broke"
+  // the same colour in a report whose whole job is telling them apart.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Red already means \*delete\*/)
+  assert.match(flat, /❌ failed/)
+  assert.match(flat, /⏸ not run/)
+})
+
+test('output formatting forbids pipe tables without forbidding its own', () => {
+  // The prompt itself uses pipe tables as reference material for the model. The rule is
+  // about what reaches the user's terminal, where a pipe table has no renderer — so the
+  // rule has to scope itself or it reads as self-contradictory.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Never use a markdown pipe table in output/)
+  assert.match(flat, /The tables in this prompt are reference material for you/)
+  assert.match(flat, /Every listing is its own fenced block/)
+})
+
+test('chips are kept out of the diagram, which uses the sign markers', () => {
+  // Emoji are double-width in most terminals and single-width in some, so one inside a box
+  // breaks the box. The two notations have to mean the same four things.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /🟢 add · 🟡 edit · 🔴 delete · ⚪ untouched/)
+  assert.match(flat, /\*\*No chips inside the diagram\*\*/)
+  assert.match(flat, /The chip is the first character of the line/)
+})
+
+// ---------------------------------------------------------------------------------------
 // Contradiction tests.
 //
 // Every test above checks that a fact is STATED somewhere. That is what let four errors
 // survive the last review: the model was corrected and the procedure kept the old claim, so
 // the same prompt asserted both. These check the procedure does not contradict the model.
 // ---------------------------------------------------------------------------------------
+
+test('the rules do not deny the flow they sit above', () => {
+  // Rule 3 used to open "There is no fixed sequence", written when the prompt was a menu.
+  // With Steps 1-7 in place that reads as permission to skip the approval gate — the two
+  // strongest instructions in the prompt, contradicting each other on page one.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/There is no fixed sequence/.test(flat), false)
+  assert.match(flat, /The seven steps are fixed; the operations inside them are not/)
+  assert.match(flat, /Never work through 6\.1–6\.5 because they are numbered/)
+})
 
 test('the procedure agrees with the model on which resources can fail', () => {
   // domain/status.go declares StatusError and domain.go:209 enums it as a string. Saying

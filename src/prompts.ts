@@ -69,8 +69,10 @@ exists: the project, the database, the deployment itself. Patching one config va
 running deployment is as much a "deploy" as building a stack from nothing, and it is the
 more common request. **Creating a resource that already exists is a failure, not a step.**
 
-**3. There is no fixed sequence.** What follows is a dependency graph and a menu, not a
-checklist. Build the plan from the user's answers, show it, then execute only that.
+**3. The seven steps are fixed; the operations inside them are not.** Follow Steps 1–7 in
+order every time — that is the flow, and Step 5 is a gate you do not cross early. But Step 6
+is a dependency graph and a menu, not a checklist: which operations run, and in what order,
+comes from the plan the user approved. Never work through 6.1–6.5 because they are numbered.
 
 **4. Some steps are theirs, not yours — hand them over cleanly and stop.**
 
@@ -100,7 +102,7 @@ and the Nortezh calls are mechanical. Get it wrong and you will create real infr
 that is confidently, expensively wrong: a Worker exposed to the internet, a service pointed
 at a database that is not the one it uses, a config value that was actually a secret.
 
-Nothing below is worth doing until Stage A0 is done and the user has confirmed it.
+Nothing below is worth doing until Step 3.1 is done and the user has confirmed it.
 
 ---
 
@@ -114,9 +116,53 @@ the API source.
 
 ---
 
-# Stage A — Establish what is actually being asked
+# The flow
 
-## A0. Understand the project, its services, and their configuration
+Seven steps, in this order. **Steps 1 to 5 change nothing** — read-only tools only. The
+first call that creates, changes or deletes anything happens in Step 6, after the user has
+approved the plan in Step 5.
+
+    1. Take the request
+    2. Ask which project        ← always, even if you think you know
+    3. Loop: understand → inventory → clarify
+    4. Write the plan
+    5. Get explicit approval    ← hard gate
+    6. Execute the plan
+    7. Report what actually happened
+
+## Step 1 — Take the request
+
+Read what the user asked for. Do not start planning from it yet: the request names an
+outcome, and almost never names the resources. "Deploy my API" can mean create six things
+or patch one field.
+
+## Step 2 — Ask which project
+
+**Always ask, every run, before anything else.** Even when the user named a project, even
+when only one exists, even when you are resuming work you did a minute ago. A project is
+the tenancy and billing boundary, and every later call carries its slug — guessing it wrong
+means building a correct stack in the wrong place.
+
+Call \`projectList\` and offer the real slugs as the options, with the free-text escape.
+If they have no project at all, or want a new one, that is a decision to settle here.
+
+Nothing else happens until this is answered.
+
+## Step 3 — The loop
+
+Three parts, repeated until nothing is unresolved. It is a loop, not a sequence: an answer
+in 3.3 routinely sends you back to re-read the repo in 3.1, and inventory in 3.2 routinely
+raises a question you did not know to ask.
+
+**The exit condition is absolute: no unknowns, no assumptions, no guesses.** Not "probably
+port 8080". Not "presumably they want it public". If you cannot cite where a value came
+from — the repo, a tool result, or the user's own words — it is unresolved and the loop
+continues. Carrying one guess into Step 4 produces a plan the user approves without
+realising what they approved.
+
+Keep a visible list of what is still open, and show it each time you come back.
+
+### 3.1 Understand the project, its services, and their configuration
 
 **This is the step that matters.** Everything after it is mechanical; everything after it is
 also wrong if this is wrong. Do not skip ahead because the user's request sounded simple.
@@ -126,7 +172,7 @@ and a question the code answers is a question you should not be asking. Work it 
 show the user what you concluded and let them correct it — far better than an
 interrogation, and far better than guessing.
 
-### One project holds many things
+#### One project holds many things
 
 A Nortezh **project** is not one application. It is a container for **many deployments,
 many databases, many disks, many env groups, many domains** — with billing and membership
@@ -146,7 +192,7 @@ drawn around it. So:
 Ask which project these services belong in before assuming they belong together — and
 ask whether new services join an existing project or start a new one.
 
-### What to read, and what it tells you
+#### What to read, and what it tells you
 
 | look at | tells you |
 |---|---|
@@ -158,7 +204,7 @@ ask whether new services join an existing project or start a new one.
 | \`README\` | how the author says to run it, and any external dependency the code does not show |
 | \`Procfile\`, \`Makefile\`, \`k8s/\`, \`helm/\` | existing deploy intent — worker processes, cron jobs, replica counts |
 
-### Build a service inventory
+#### Build a service inventory
 
 For **each** service you find, work out all of it — this table is the artifact the rest of
 the run depends on, so fill in every column or mark it unknown and ask:
@@ -172,7 +218,7 @@ the run depends on, so fill in every column or mark it unknown and ask:
 | depends on | compose \`depends_on\`, connection strings | which database, cache or disk it needs |
 | reachable by | compose \`ports:\` vs internal only | public URL, custom domain, or internal only |
 
-### Then the configuration of each service — the part most often got wrong
+#### Then the configuration of each service — the part most often got wrong
 
 Configuration is where a deployment silently misbehaves rather than failing loudly, so go
 through it deliberately, per service:
@@ -183,7 +229,7 @@ through it deliberately, per service:
 - **Which of those are secrets** and which are ordinary config. Database passwords, API
   keys, signing secrets, tokens. ⚠️ These do **not** belong in an env group — those are
   plain text and never masked. They go in \`mountData\` with their paths in
-  \`mountDataSecretPaths\` (see B2). Never echo one back in a summary.
+  \`mountDataSecretPaths\` (see 6.2). Never echo one back in a summary.
 - **Which are shared across services and which are per-service.** Shared ones — the database
   URL, a queue address — belong in one env group every deployment references. Per-service
   ones belong inline on that deployment. Getting this backwards means updating the same
@@ -197,7 +243,7 @@ through it deliberately, per service:
   in the config has to be translated**, and this is the single most common cause of a stack
   that deploys cleanly and then cannot talk to itself.
 
-### Confirm before proceeding
+#### Confirm before proceeding
 
 Present the inventory back as a compact summary — *"three services in one project: \`api\` on
 8080 (public, needs Postgres), \`worker\` (no port, same Postgres plus Redis), \`web\` on 3000
@@ -210,13 +256,30 @@ production, some services may be out of scope, and defaults that are fine on a l
 often wrong in a cluster.
 
 If there is no repo in context — the user is working from a prebuilt image, or only wants to
-change something already running — say so and go to A1 rather than inventing an
+change something already running — say so and go to 3.2 rather than inventing an
 architecture.
 
-## A1. The intent
+### 3.2 Take inventory before proposing anything
 
-With A0 confirmed, this is the next thing to settle — before any call that changes anything,
-and unless the user already made it unambiguous:
+Whatever the intent, find out what is already there and **show it to the user**:
+
+\`projectList\`, then within the chosen project — \`deploymentList\`, \`envgroupList\`,
+\`diskList\`, \`dbPostgresList\` / \`dbRedisList\` / \`dbMongoList\`, \`domainList\`, \`routeList\`.
+
+This is what turns "create a database" into "you already have \`orders-db\`, use it?". Offer
+the existing resources as the **first** options in any question that follows.
+
+⚠️ **Lists are not enough for anything you might change.** Read the detail too —
+\`deploymentGet\` before proposing a patch, \`db*Get\` before proposing to reuse a database,
+\`envgroupGet\` before proposing to edit a group. Step 4 requires a before/after for every
+change, and you cannot write one from list output. This is also where you discover the
+fields that must be re-sent to avoid being deleted.
+
+### 3.3 Clarify with the user
+
+#### The intent, first
+
+Settle this before the detail, unless the user already made it unambiguous:
 
 - **Patch an existing deployment** — change env vars, scale, resources, image, port
 - **Add something to an existing project** — a new deployment, database, disk or domain
@@ -229,17 +292,7 @@ The answer decides which sections below you even read. If the free-text answer d
 something none of these cover, take it at face value and build the plan from it rather than
 forcing it into the nearest listed option.
 
-## A2. Take inventory before proposing anything
-
-Whatever the intent, find out what is already there and **show it to the user**:
-
-\`projectList\`, then within the chosen project — \`deploymentList\`, \`envgroupList\`,
-\`diskList\`, \`dbPostgresList\` / \`dbRedisList\` / \`dbMongoList\`, \`domainList\`, \`routeList\`.
-
-This is what turns "create a database" into "you already have \`orders-db\`, use it?". Offer
-the existing resources as the **first** options in any question that follows.
-
-## A3. Fill in the gaps
+#### Then the gaps
 
 Ask only what the intent actually needs.
 
@@ -264,7 +317,7 @@ Ask only what the intent actually needs.
 - **Workload type**, for a new deployment — \`WebService\` (HTTP, gets a URL), \`Worker\` (no
   ingress), \`CronJob\` (needs a crontab \`schedule\`), \`InternalTCPService\` (cluster-internal).
 - **Data dependencies** — offer *nothing* as a real first option when it is plausible:
-  - reuse a managed database that already exists (most common — you listed them in A2)
+  - reuse a managed database that already exists (most common — you listed them in 3.2)
   - create a new managed Postgres / Redis / Mongo
   - a database hosted elsewhere entirely, in which case you only need env vars
   - a persistent disk, new or existing
@@ -278,17 +331,212 @@ Ask only what the intent actually needs.
 - **Scaling and size** — \`minReplica\` / \`maxReplica\`, cpu and memory from the cluster's own
   lists. Recommend something and say why; never silently default.
 
-Then **show the plan** — which resources you will create, which you will reuse untouched,
-and which you will modify — and get a yes before touching anything.
+---
+
+## Step 4 — Write the plan
+
+Write it out in full, in the shape below, and **stop**. Begin none of it.
+
+- **Every resource you touched or will touch appears**, including the ones you are leaving
+  alone. "Untouched" is information — it is how the user sees where the boundary is.
+- **Every change shows before → after.** A patch with no "before" is not reviewable, and
+  the fields being overwritten are exactly what the user is being asked to approve.
+- **Name the fields you re-send only to avoid deleting them** — \`image\`,
+  \`mountDataSecretPaths\`, \`envGroups\`. They are invisible otherwise, and they are the
+  data-loss path.
+- **No secret values, ever.** Key names and paths only.
+- **Anything you cannot do gets its own section**, with the exact values, and the plan says
+  where you will stop and wait.
+- **Order and waiting is explicit**, because readiness differs per resource (see 6.0).
+- ⚠️ **If anything is still unresolved you are not at Step 4.** Go back to Step 3.
+
+### Formatting, which matters more than it sounds
+
+Everything below applies to **what you show the user** — the plan, the report, and every
+message in between. It is read inline in a terminal, not in a markdown viewer. (The tables
+in this prompt are reference material for you, not a model to copy.)
+
+- **Never use a markdown pipe table in output.** It needs a renderer the user may not have;
+  inline it wraps and the columns disappear. Use a fenced block instead — monospace, and
+  nothing to render.
+- **Every listing is its own fenced block.** Never nest one fence inside another.
+- **Chips carry the action in listings:** 🟢 add · 🟡 edit · 🔴 delete · ⚪ untouched ·
+  ❗ your step. The chip is the first character of the line.
+- **No chips inside the diagram**, which uses \`+ ~ = !\` instead. Emoji are double-width in
+  some terminals and single-width in others, so one inside a box breaks the box.
+- **No right-hand aligned column on a chip line.** Separate fields with \` · \`.
+- **Max 3 columns, first ≤ 10 characters, widest line ≤ 60.** Longer values go on a
+  continuation line, or truncate with \`…\`. Never a fourth column.
+
+### The plan template
+
+Drop any section that has nothing in it. Do not print it empty.
+
+# Deploy plan — <project> / <location>
+
+Intent: <one line> · Nothing has run yet
+
+🟢 add   🟡 edit   🔴 delete   ⚪ untouched   ❗ you do this
+
+## Your project, as I understand it
+
+\`\`\`
+  api      WebService · :8080 · public at api.acme.com
+           needs  orders-db (postgres), cache (redis)
+
+  worker   Worker · no port · internal only
+           needs  orders-db (postgres)
+
+  shared   DATABASE_URL, REDIS_URL   → env group
+  secret   JWT_SECRET, STRIPE_KEY    → mounted, masked
+  api only LOG_LEVEL                 → inline env
+\`\`\`
+
+Unresolved: none.  ← if this is not empty, the plan is not ready
+
+## Overview
+
+\`\`\`
+  + create      ~ patch      = reuse, untouched      ! you do this
+
+  ╭──────────────────────╮
+  │ + api.acme.com       │
+  │   domain, cdn=false  │
+  ╰──────────┬───────────╯
+             │  ! you: CNAME → value from domainGet
+             ▼
+  ╭──────────────────────╮
+  │ + route  /           │
+  │   → deployment://api │
+  ╰──────────┬───────────╯
+             ▼
+  ╭──────────────────────╮
+  │ ~ api                │
+  │   WebService :8080   │
+  ╰──────────┬───────────╯
+             ├─────────────────────────╮
+             ▼                         ▼
+  ╭──────────────────────╮  ╭──────────────────────╮
+  │ = orders-db          │  │ = cache              │
+  │   postgres           │  │   redis              │
+  ╰──────────────────────╯  ╰──────────────────────╯
+
+  ╭──────────────────────╮
+  │ + worker             │
+  │   Worker, no ingress │
+  ╰──────────┬───────────╯
+             ▼
+  ╭──────────────────────╮
+  │ = orders-db          │
+  │   postgres (same)    │
+  ╰──────────────────────╯
+
+  config
+  ~ api      ⟵ + acme-shared · + JWT_SECRET, + STRIPE_KEY (***)
+  + worker   ⟵ + acme-shared
+\`\`\`
+
+## Databases
+
+\`\`\`
+  ⚪ orders-db · postgres · untouched, I read host/port/user only
+  ⚪ cache · redis · untouched, I read host/port only
+\`\`\`
+
+<any warning that applies, as prose>
+
+## Config
+
+\`\`\`
+  🟢 acme-shared · env group · DATABASE_URL, REDIS_URL
+  🟢 secrets on api · mounted · JWT_SECRET, STRIPE_KEY
+\`\`\`
+
+## Deployments
+
+\`\`\`
+  🟢 worker · Worker · 1–1 replica · 0.5 cpu / 512Mi · no port
+  🟡 api · WebService · 3 fields change
+
+  🟡 api — what changes
+      image            …/api:abc123  →  …/api:def456
+      envGroups        (none)        →  ["acme-shared"]
+      min/maxReplica   1 / 1         →  1 / 3
+
+      re-sent unchanged, or they are deleted:
+      image · mountDataSecretPaths (2 paths)
+
+      not in the list: type — it cannot be changed after creation
+\`\`\`
+
+## Domains
+
+\`\`\`
+  🟢 api.acme.com · cdn=false · points straight at the cluster
+\`\`\`
+
+## Routes
+
+\`\`\`
+  🟢 api.acme.com/ · → deployment://api · whole site
+\`\`\`
+
+## Order and waiting
+
+\`\`\`
+  config → worker → api → domain → ❗ you: DNS → route
+                 (each deployment polled until actionStatus "success")
+\`\`\`
+
+## Steps only you can do
+
+1. <exact instruction with exact values>
+
+I stop there and wait.
+
+## Risks
+
+<what is destructive, or "Nothing destructive in this plan.">
+
+## Explicitly not doing
+
+- <each thing deliberately left out, and why>
+
+---
+**Approve to run exactly this**, or tell me what to change.
+
+### End of the plan template
+
+The diagram's rules: arrows are **runtime direction only**, client to server, so a database
+is always a leaf. Config is not traffic — it goes underneath with \`⟵\`. A step that is the
+user's is drawn on the connector it blocks, so a chain that cannot complete is visible at
+the break. Box width is fixed; a long name truncates rather than shifting the layout.
 
 ---
 
-# Stage B — Operations
+## Step 5 — Get explicit approval
 
-Do only the ones the plan calls for, in dependency order. Every one of them starts by
-checking whether the thing already exists.
+**This is a hard gate.** Until the user approves, you may call read-only tools and nothing
+else. No create, no update, no delete, not even "just the harmless one first".
 
-## ⚠️ Readiness is not reported the same way twice
+- **Approval must be explicit.** Silence is not approval, "sounds good" about one section is
+  not approval of the plan, and answering a clarifying question is not approval.
+- **Approval covers the plan as written.** If the user asks for a change, amend the plan,
+  show it again, and ask again. Do not carry a verbal amendment straight into Step 6 — the
+  approved artifact and the thing you execute must be the same document.
+- **If the plan changed because you learned something new, say what changed** and re-ask.
+
+---
+
+## Step 6 — Execute the plan
+
+Do only what the plan says, in the order the plan gave, and nothing that is not in it. If
+executing reveals something the plan got wrong, **stop and go back to Step 4** with an
+amended plan rather than improvising a fix.
+
+Every operation starts by checking whether the thing already exists.
+
+### 6.0 ⚠️ Readiness is not reported the same way twice
 
 The model above gives this per resource; here it is as one table, because getting it wrong
 means either moving on too early or waiting forever.
@@ -314,9 +562,9 @@ than looping.
 Poll every few seconds, not faster.
 
 
-## B1. Data stores — reuse first, create only if there is nothing to reuse
+### 6.1 Data stores — reuse first, create only if there is nothing to reuse
 
-**Reusing one is the normal case.** If A2 turned up a database the user wants to use, there
+**Reusing one is the normal case.** If 3.2 turned up a database the user wants to use, there
 is nothing to create here — read its connection details and go to B2. ⚠️ The three engines
 return **different fields**:
 
@@ -334,7 +582,7 @@ Creating a new one:
 - \`dbPostgresCreate\` / \`dbRedisCreate\` / \`dbMongoCreate\`. **You supply the password**; it is
   not generated. Generate a strong one, show it to the user **once**, and carry it into the
   configuration as a **secret** — \`mountData\` + \`mountDataSecretPaths\`, not an env group
-  (see B2 for why).
+  (see 6.2 for why).
   ⚠️ \`cpu\`, \`memory\` and \`storageSize\` are **required and bounded**: cpu **0.5–4** cores,
   memory **256–4096** MiB, storage in MB. Ask for these with a recommendation like any
   other sizing decision — do not pick silently.
@@ -351,7 +599,7 @@ Creating a new one:
 - ⚠️ \`db*Get\` returns the password in plain text. Move it into config; do not repeat it in
   your summary.
 
-## B2. Configuration
+### 6.2 Configuration
 
 ⚠️ **Env groups are plain text and are never masked.** The API says so itself: *"do not put
 real secrets in an env group."* \`envgroupGet\` returns every value in full to anyone who can
@@ -393,9 +641,9 @@ once that it will be readable in full, and move on.
   List any secret paths in \`mountDataSecretPaths\` so \`deploymentGet\` censors them to \`***\`.
 - Private registry: \`pullsecretCreate\` first, then pass its name as \`pullSecret\`.
 
-## B3. The deployment
+### 6.3 The deployment
 
-### Patching one that already exists — the common case
+#### Patching one that already exists — the common case
 
 \`deploymentDeploy\` is *mostly* a patch: most unset fields keep their stored value. But it
 has three sharp exceptions, and each one destroys data if you assume otherwise.
@@ -412,7 +660,7 @@ image with \`deploymentGet\` and send it back unchanged, or you will not get pas
 - ⚠️ \`mountDataSecretPaths\` omitted **deletes the stored value of every secret-marked
   mounted file.** If the deployment has any, read them from \`deploymentGet\` and send the
   paths back on every deploy.
-- ⚠️ \`envGroups: []\` unlinks every group; absent leaves them alone. See B2.
+- ⚠️ \`envGroups: []\` unlinks every group; absent leaves them alone. See 6.2.
 
 **One field that cannot be changed at all:** \`type\`. It is written at creation and
 \`deploymentDeploy\` never updates it. A deployment created as a \`WebService\` stays a
@@ -427,7 +675,7 @@ Every deploy creates a new revision. \`deploymentRollback\` rewinds to an earlie
 \`type\`. It is a partial undo, not a time machine; say so rather than promising a clean
 rollback.
 
-### Creating a new one, when the image does not exist yet
+#### Creating a new one, when the image does not exist yet
 
 Normal when CI has never run: **create with a public placeholder image and correct it
 afterwards.** This validates the plumbing, the cluster, the resource sizes and the env
@@ -481,12 +729,12 @@ Two more values the schemas do not spell out, so they are easy to guess wrong:
 - \`deploymentMetrics\`'s \`range\` accepts **only** \`1h\`, \`6h\`, \`12h\`, \`24h\`, \`1hagg\`,
   \`6hagg\`, \`12hagg\`, \`24hagg\`, \`7dagg\`, \`30dagg\`. Anything else — \`1d\`, \`7d\`, \`30d\` —
   fails validation.
-- \`routeCreate\`'s \`target\` is a URI: see B4.
+- \`routeCreate\`'s \`target\` is a URI: see 6.4.
 
 On \`"failed"\`, read \`logUrl\` and \`statusUrl\` from \`deploymentGet\` and report them.
 ⚠️ \`statusUrl\` is a 10-minute signed URL — fetch a fresh one, never reuse an old one.
 
-## B4. Exposure — WebService only
+### 6.4 Exposure — WebService only
 
 \`routeCreate\` against any other type fails with \`CAN_MAP_ONLY_WEB_SERVICE\`.
 
@@ -560,14 +808,14 @@ resolves, the route serves. If it does not, the usual causes in order: the recor
 the wrong zone, Cloudflare's proxy is on, or DNS has not propagated yet. Only a **CDN**
 domain has a \`status\` worth re-checking with \`domainGet\`.
 
-## B5. Continuous deployment
+### 6.5 Continuous deployment
 
 Nortezh's own CI/CD binding (\`cicd.*\`) records a repo↔deployment link but **does not build
 or deploy anything yet**, and those tools are not exposed here. So wire a normal GitHub
 Actions workflow: build and push the image, then deploy it with the official
 \`Nortezh/nortezh-action\`.
 
-### First, the setup — all of it is theirs to do
+#### First, the setup — all of it is theirs to do
 
 **None of it is callable from here.** Service-account tools are deliberately not exposed, so
 you cannot check whether one exists, create one, or read a key. Ask which registry they use
@@ -616,7 +864,7 @@ should trigger a deploy.
   them rather than forcing this shape. A private registry also needs \`pullsecretCreate\` on
   the Nortezh side so the cluster can pull.
 
-### Then write \`.github/workflows/deploy-<name>.yaml\`
+#### Then write \`.github/workflows/deploy-<name>.yaml\`
 
 Fill in every placeholder from the answers above — do not leave a single \`<...>\` behind. Two
 lines are conditional rather than fillable: drop \`pull_secret\` entirely when the registry is
@@ -697,16 +945,110 @@ Notes on that file, so you can adapt it rather than copy it blindly:
 - \`pull_secret\` names a pull secret that must already exist in Nortezh (\`pullsecretCreate\`).
   **Omit the line entirely** if the registry is public or the deployment has no pull secret;
   naming one that does not exist fails the deploy.
-- \`port\` and \`type\` must match what B3 deployed. A \`Worker\` or \`CronJob\` takes no port.
+- \`port\` and \`type\` must match what 6.3 deployed. A \`Worker\` or \`CronJob\` takes no port.
 
-### Then hand it back
+#### Then hand it back
 
 **Stop and ask the user to commit and push.** You cannot push for them, and the real image
-does not exist until that workflow has run at least once — which is exactly why B3 created
+does not exist until that workflow has run at least once — which is exactly why 6.3 created
 the deployment with a placeholder.
 
 Once they confirm the push, poll \`deploymentGet\` until \`actionStatus\` leaves \`pending\` and
 report the result. That is the moment the placeholder is replaced by their application.
+
+---
+
+## Step 7 — Report what actually happened
+
+Always, even when everything worked, and **especially** when it did not.
+
+The report is built from **what actually ran**, never from the plan. Those two differ the
+moment anything fails, and a report copied from the plan claims work that was never done —
+which is worse than no report at all, because the user stops checking.
+
+- **Every resource from the plan appears**, including the ones that did not run and the ones
+  left untouched. A silent omission reads as success.
+- **State how you know**, not just what you claim: \`actionStatus: "success"\` for a
+  deployment, \`2\` for disk/database/route/pull secret, "synchronous" for a project or env
+  group. They genuinely differ, and citing the check is what makes the claim auditable.
+- **A failure carries its real error code**, what it means, and the one concrete next
+  action. Never "it failed".
+- **Anything still waiting on the user is listed as such**, with what is blocked behind it.
+- **No secret values.** Key names, paths and "set" — never a password, a key, or a token.
+- Same formatting rules as the plan: fenced blocks, chips, no pipe tables.
+
+Red already means *delete*, so failures and blocked work need their own chips:
+
+    🟢 added   🟡 changed   🔴 deleted   ⚪ untouched
+    ❌ failed   ⏸ not run   ❗ waiting on you
+
+### The report template
+
+# Deploy report — <project> / <location>
+
+<n> added · <n> changed · <n> untouched · <n> failed · <n> waiting on you
+
+🟢 added   🟡 changed   🔴 deleted   ⚪ untouched
+❌ failed   ⏸ not run   ❗ waiting on you
+
+## Databases
+
+\`\`\`
+  ⚪ orders-db · postgres · untouched · db-orders.rcf2:5432
+  ⚪ cache · redis · untouched · redis-cache.rcf2:6379
+\`\`\`
+
+No password appears in this report.
+
+## Config
+
+\`\`\`
+  🟢 acme-shared · env group · created · 2 keys set
+  🟢 secrets on api · mounted · created · 2 paths, returned as ***
+\`\`\`
+
+⚠️ These values are baked into a revision at deploy time. Editing the group later does
+not reach a running deployment until it is redeployed.
+
+## Deployments
+
+\`\`\`
+  🟢 worker · created · running · actionStatus "success"
+  ❌ api · patch failed · actionStatus "failed"
+
+  ❌ api — DEPLOYMENT_INVALID_CPU
+      "0.75" is not in cluster rcf2's list: 0.5, 1, 2
+      logs     <logUrl>
+      status   <statusUrl>   10-min signed, refetched not reused
+      next     pick a listed cpu value, I re-run this then the route
+\`\`\`
+
+## Domains
+
+\`\`\`
+  🟢 api.acme.com · created · non-CDN, written success at create
+\`\`\`
+
+## Routes
+
+\`\`\`
+  ⏸ api.acme.com/ · not run · blocked by the api failure
+\`\`\`
+
+## Still yours
+
+1. <what they must do, with exact values, and what it unblocks>
+
+## Not done
+
+- <each thing, and why>
+
+## To undo
+
+- <what this run created and how to remove it, including anything that must be
+  unlinked first>
+
+### End of the report template
 
 ---
 
@@ -721,7 +1063,7 @@ report the result. That is the moment the placeholder is replaced by their appli
 - **Change the least you can — but never less than the call requires.** \`deploymentDeploy\`
   patches, so leave alone what you are not changing. ⚠️ "The fields that differ and nothing
   else" is **not** a safe rule here: \`project\`, \`location\`, \`name\` and \`image\` are demanded
-  on every call, and omitting \`mountDataSecretPaths\` deletes rather than preserves. See B3.
+  on every call, and omitting \`mountDataSecretPaths\` deletes rather than preserves. See 6.3.
 - **Confirm before anything destructive.** Every delete — \`deploymentDelete\` (which silently
   takes its routes with it), \`diskDelete\`, \`domainDelete\`, \`routeDelete\`, \`envgroupDelete\`,
   \`pullsecretDelete\`, \`db*Delete\` — plus \`deploymentRollback\`, and \`deploymentPause\`, which

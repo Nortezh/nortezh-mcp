@@ -71,15 +71,25 @@ The server ships a prompt, so it arrives with `claude mcp add` — nothing extra
 /mcp__nortezh__resources       what each resource is and what it depends on
 ```
 
-**`deploy-stack`** covers the whole job, from reading your repo to continuous deploys. It
-starts by working out your service topology from `docker-compose.yml`, Dockerfiles and
-`.env.example`, then asks what you actually want — patch an existing deployment, add to a
-project, build from nothing, or just wire CI — and does only that.
+**`deploy-stack`** covers the whole job, from reading your repo to continuous deploys, and
+runs as seven fixed steps:
 
-It takes inventory before proposing anything and offers what already exists first, so it is
-safe to re-run on a half-built stack and will not create a duplicate of something you
-have. All arguments are optional (`project`, `name`, `image`, `location`, `domain`,
-`repo`) — pass what you know, it asks for the rest as it goes.
+1. take the request
+2. **ask which project** — always, every run
+3. loop: work out your architecture from `docker-compose.yml`, Dockerfiles and
+   `.env.example` → take inventory of what already exists → clarify. The loop does not exit
+   while anything is still a guess.
+4. write a plan — one section per resource kind, a diagram, and before/after for every change
+5. **your explicit approval**
+6. execute exactly that
+7. report what actually ran, including what failed and what is still yours to do
+
+**Nothing is created, changed or deleted before step 5.** Steps 1–4 use read-only tools
+only, so it is safe to run it just to see what it would propose.
+
+It offers what already exists ahead of creating anything, so re-running it on a half-built
+stack will not duplicate what you have. All arguments are optional (`project`, `name`,
+`image`, `location`, `domain`, `repo`) — pass what you know, it asks for the rest.
 
 Two steps it deliberately hands back to you rather than doing itself: adding the DNS record
 a domain needs, and minting the service-account key the CI workflow authenticates with.

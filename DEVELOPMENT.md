@@ -34,6 +34,22 @@ src/index.ts           MCP server, stdio transport
 surfaces them as slash commands, so `claude mcp add` is the entire install — no `SKILL.md`
 to symlink, and it works in any MCP client rather than only Claude Code.
 
+`deploy-stack` is structured as seven fixed steps, and two of its properties are load-bearing
+rather than stylistic:
+
+- **Steps 1–5 are read-only.** The first mutating call happens in Step 6, after the user
+  approves a written plan. Anything that would let a create slip earlier — a rule saying
+  "there is no fixed sequence", an operation described before the gate — is a bug, and
+  `test/prompts.test.ts` asserts against it.
+- **The plan and report templates are part of the contract.** Their sections are asserted,
+  including the ones people delete as noise: `Explicitly not doing`, `Not done`, `To undo`.
+  A report that silently omits what did not run reads as success.
+
+Output goes to a **terminal**, not a markdown viewer, so the templates use fenced blocks
+rather than pipe tables, and emoji chips only on plain lines — never inside the box-drawing
+diagram, where a double-width glyph breaks the boxes. The prompt's own tables are reference
+material for the model and are exempt; the rule is scoped to what reaches the user.
+
 Write into a prompt only what the tool schemas **cannot** carry:
 
 - the order operations must happen in, and what depends on what
