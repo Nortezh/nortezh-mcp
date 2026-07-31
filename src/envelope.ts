@@ -34,33 +34,46 @@ export const UNCODED_ERROR = 'UNCODED_ERROR'
 /** Not an API code: an HTTP 500, which carries no useful domain error. */
 export const SERVER_ERROR = 'SERVER_ERROR'
 
+/** Not an API code: a 5xx that is not 500 — the ingress or proxy, not the API itself. */
+export const SERVER_UNAVAILABLE = 'SERVER_UNAVAILABLE'
+
+/** Not an API code: a status arpc cannot emit, so the response is not an envelope at all. */
+export const TRANSPORT_ERROR = 'TRANSPORT_ERROR'
+
+/**
+ * The only statuses arpc produces (Manager.EncodeError, arpc.go:155-170):
+ *
+ *   OKError       -> 200   a domain error, `{"ok":false,"error":{…}}`
+ *   ProtocolError -> 400   a malformed request, also a real envelope
+ *   anything else -> 500   internal, body replaced with a fixed placeholder
+ *
+ * A success is 200 too. So 200 and 400 are the only statuses whose body is worth parsing as
+ * an envelope; every other one was produced by something in front of the API.
+ */
+const ENVELOPE_STATUSES = new Set([200, 400])
+
 /**
  * Maps one HTTP response into a tool result or a tool error.
  *
- * Status handling, all confirmed against the backend's behaviour:
+ * Status handling, all confirmed against arpc's own EncodeError:
  *  - 200 with `ok:true`  -> success, unwrap `result`
  *  - 200 with `ok:false` -> domain error, surfaced as a tool error with its code
- *  - 400                 -> arpc protocol error (malformed request), body may be JSON
- *  - 500                 -> server fault, never a domain error. Handled before parsing: the
- *                           body may be arpc's `{"ok":false,"error":{}}`, an ingress's own
- *                           JSON, HTML, or nothing at all — whatever it is gets reported
+ *  - 400                 -> arpc protocol error (malformed request), also a real envelope
+ *  - anything else       -> not an envelope. Reported by status, body preserved.
  */
 export function interpret(status: number, bodyText: string): Interpreted {
-  // A 500 is handled BEFORE parsing, not inside the parse failure. arpc emits
-  // {"ok":false,"error":{}} for one, and an ingress or CDN emits its own JSON — both parse
-  // fine, so keying off the parse result would send the ordinary production 500 down the
-  // envelope path and report it as a code-less domain error instead of a server fault.
-  // Whatever body arrived is reported rather than discarded.
-  if (status === 500) {
-    return {
-      ok: false,
-      code: SERVER_ERROR,
-      message:
-        bodyText.trim() === ''
-          ? 'The API returned HTTP 500 with an empty body. Check the API server logs.'
-          : `The API returned HTTP 500: ${truncate(bodyText)}`,
-      items: [],
-    }
+  // Everything arpc cannot emit is handled BEFORE parsing, not inside the parse failure.
+  //
+  // Keying off the parse result is the bug this replaces. A 500 from arpc is
+  // `{"ok":false,"error":{}}` and an ingress 503 is `{"error":"no healthy upstream"}` —
+  // both parse perfectly well, so both went down the envelope path and came back as
+  // code-less domain errors. The 503 was the worse of the two: its body named the actual
+  // fault and was thrown away, leaving "HTTP 503 with no error code or message".
+  //
+  // Only 200 and 400 come from arpc with a body worth reading as an envelope. Anything else
+  // was produced by the ingress, a proxy, or the wrong URL, so its body is reported as-is.
+  if (!ENVELOPE_STATUSES.has(status)) {
+    return { ok: false, code: transportCode(status), message: transportMessage(status, bodyText), items: [] }
   }
 
   let parsed: unknown
@@ -115,4 +128,53 @@ export function formatError(error: Extract<Interpreted, { ok: false }>): string 
 
 function truncate(value: string, max = 300): string {
   return value.length <= max ? value : `${value.slice(0, max)}…`
+}
+
+function transportCode(status: number): string {
+  if (status === 500) return SERVER_ERROR
+  if (status >= 500) return SERVER_UNAVAILABLE
+  return TRANSPORT_ERROR
+}
+
+/**
+ * What to say about a status arpc did not produce.
+ *
+ * The body is always included when there is one: for these statuses it is the only
+ * diagnostic there is, and it is usually the thing that names the real fault ("no healthy
+ * upstream", "upstream connect error", an nginx error page).
+ */
+function transportMessage(status: number, bodyText: string): string {
+  const body = bodyText.trim()
+  const detail = body === '' ? ' The response had no body.' : ` Response: ${truncate(body)}`
+
+  if (status === 500) {
+    return body === ''
+      ? 'The API returned HTTP 500 with an empty body. Check the API server logs.'
+      : `The API returned HTTP 500: ${truncate(body)}`
+  }
+  if (status >= 500) {
+    return (
+      `HTTP ${status}: the API did not handle this request — that status comes from the ` +
+      `ingress or a proxy, not from the API, so it is usually unreachable, restarting, or ` +
+      `overloaded rather than rejecting the call.${detail}`
+    )
+  }
+  if (status === 404) {
+    return (
+      `HTTP 404: no route at this URL. arpc answers an unknown method on a valid mount with ` +
+      `HTTP 200 and ok:false, so a real 404 means the base URL is wrong — most often ` +
+      `NORTEZH_API_URL is missing its /user suffix.${detail}`
+    )
+  }
+  if (status === 401 || status === 403) {
+    // Deliberately NOT mapped to UNAUTHORIZED: index.ts reopens the browser on that code,
+    // and a proxy rejecting the request is not an expired Nortezh token. The API's own
+    // auth failures arrive as HTTP 200 with code UNAUTHORIZED.
+    return (
+      `HTTP ${status}: rejected before reaching the API — the API reports its own auth ` +
+      `failures as HTTP 200 with code UNAUTHORIZED, so this came from a proxy or gateway ` +
+      `in front of it.${detail}`
+    )
+  }
+  return `HTTP ${status}: unexpected status; arpc only emits 200, 400 and 500.${detail}`
 }

@@ -516,6 +516,45 @@ test('every destructive tool is named in the confirm-first rule', () => {
   }
 })
 
+// SCREAMING_SNAKE tokens in the prompt that are environment variables or secret names, not
+// API error codes. Everything else in that shape is checked against what the tools can
+// actually return — a code the model is told to react to but no route emits is advice it
+// can never use, and it reads exactly like a real one.
+const NOT_ERROR_CODES = new Set([
+  'EXPOSE',
+  'README',
+  'DATABASE_URL',
+  'REDIS_URL',
+  'JWT_SECRET',
+  'STRIPE_KEY',
+  'NORTEZH_SA_EMAIL',
+  'NORTEZH_SA_KEY',
+  'GOOGLE_CREDENTIALS',
+  'SA_AUTH_EMAIL',
+  'SA_AUTH_KEY',
+])
+
+test('every error code the prompts cite is one an exposed tool can return', () => {
+  const returnable = new Set(TOOLS.flatMap((tool) => tool.errorCodes))
+  const text = PROMPTS.map((prompt) => prompt.render({})).join('\n')
+
+  const cited = new Set(
+    [...text.matchAll(/`([A-Z][A-Z0-9_]{4,})`/g)]
+      .map((match) => match[1] as string)
+      .filter((candidate) => !NOT_ERROR_CODES.has(candidate)),
+  )
+
+  assert.ok(cited.size > 20, 'expected the prompts to name error codes')
+  for (const code of cited) {
+    assert.ok(
+      returnable.has(code),
+      `the prompts tell the model to expect ${code}, which no exposed tool declares in ` +
+        'x-error-codes. Either it is not a real code, or it belongs to a route that is not ' +
+        'in the allowlist. (If it is an env var, add it to NOT_ERROR_CODES.)',
+    )
+  }
+})
+
 test('deploymentGet.url is not described as always working', () => {
   // An external ingress exists only for a non-internal WebService, but `url` is populated
   // for every type — so "every deployment already has a working URL" sent the model off to

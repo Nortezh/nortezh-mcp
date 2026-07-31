@@ -53,11 +53,14 @@ Just ask:
 - *"what's deployed in project acme, and which ones are paused?"*
 - *"show me cpu and memory for the api deployment over the last 24h"*
 - *"roll back web to the previous revision"*
-- *"create a 20Gi disk called uploads in acme, location rcf2"*
+- *"create a 20 GB disk called uploads in acme, location rcf2"* (disk size is in MB — that
+  is `20480`)
 - *"add DATABASE_URL to the acme env group and redeploy api"*
 
-Destructive tools (`deploymentDelete`, `deploymentRollback`, `diskDelete`, …) are marked
-as such in the spec, so Claude asks before running them.
+Destructive tools (`deploymentDelete`, `deploymentRollback`, `diskDelete`, …) carry the
+spec's `destructiveHint`, which is what prompts your client to confirm before running one.
+It is a hint, not an enforced gate — a client configured to auto-approve tools will not
+stop for it.
 
 ## Guided workflows
 
@@ -78,13 +81,16 @@ safe to re-run on a half-built stack and will not create a duplicate of somethin
 have. All arguments are optional (`project`, `name`, `image`, `location`, `domain`,
 `repo`) — pass what you know, it asks for the rest as it goes.
 
-Three steps it deliberately hands back to you rather than doing itself: creating a project
-(that needs a billing account UUID no exposed tool returns), adding the DNS record a domain
-needs, and minting the service-account key the CI workflow authenticates with.
+Two steps it deliberately hands back to you rather than doing itself: adding the DNS record
+a domain needs, and minting the service-account key the CI workflow authenticates with.
+(Creating a project it can do — `projectCreate` needs a billing account UUID, which
+`projectGet` returns for any project you already have. Only your very first one has to come
+from the console.)
 
 **`resources`** is the reference behind it: every resource's definition, what it depends on
-in both directions, how you tell it is ready — which differs for all four of deployment,
-database, disk and route — and what can still be changed after it exists.
+in both directions, how you tell it is ready — no two resources report that the same way,
+and only deployments and domains can report failure at all — and what can still be changed
+after it exists.
 
 `deploy-stack` **embeds `resources` verbatim**, so it is self-contained; run `resources` on
 its own when you want the model without the procedure. (A prompt cannot fetch another
