@@ -124,6 +124,11 @@ they would then sit in the transcript and in anything that logs it.
 So: work out **whether** a pull secret is needed at all, check whether one already exists,
 and if not, give the user numbered steps to create it themselves. Then stop and wait.
 
+**The same holds for every registry credential**, including the one GitHub Actions pushes
+with. You name the GitHub secret; the user creates the key and pastes it into GitHub Secrets
+themselves. It never passes through this conversation, and you never need its value — the
+workflow references it by name.
+
 ⚠️ **Never ask for a registry username, password, token or key.** Not "so I can set it up
 for you", not "paste it and I will handle the rest". If the user volunteers one anyway, say
 plainly that it is now in the transcript and should be rotated.
@@ -951,22 +956,34 @@ The handoff, roughly this short:
 > create one if you have not already, then create a key and copy the value. Check it is a
 > member of the project.
 >
-> **2. A registry the cluster can pull from.** For Google Artifact Registry: a Docker
-> repository, and a Google service account with Artifact Registry Writer plus a JSON key.
+> **2. A push credential for the registry.** The workflow has to authenticate to push the
+> image it builds. For Google Artifact Registry: create a Docker repository, then a Google
+> service account with the **Artifact Registry Writer** role, and download its JSON key.
 >
 > **3. A pull secret**, since that registry is private. Console → this project →
 > Pull Secrets → Create, in the same location as the deployment. Send me the **name** you
 > gave it — never the password.
 >
-> **4. Three GitHub secrets**, in Settings → Secrets and variables → Actions:
+> **4. Three GitHub secrets**, in Settings → Secrets and variables → Actions →
+> New repository secret. Paste each value straight in — do not send them to me:
 >
 > \`\`\`
 >   NORTEZH_SA_EMAIL    the service account email from step 1
 >   NORTEZH_SA_KEY      the key from step 1
->   GOOGLE_CREDENTIALS  the whole JSON key from step 2
+>   GOOGLE_CREDENTIALS  the whole JSON key file from step 2, pasted entire
 > \`\`\`
 >
 > Tell me when that is done and I will write the workflow.
+
+⚠️ **The push credential goes from the user straight into GitHub Secrets, never through
+you.** Do not ask them to paste a JSON key, a PAT or a registry password here "so I can put
+it in the workflow" — a value in this transcript is a value that has to be rotated. You need
+the secret **names**, which you already know because you chose them.
+
+**Steps 2 and 3 are different credentials with different scopes**, and conflating them is
+common: step 2 is **push**, used by GitHub Actions, and needs **write**. Step 3 is **pull**,
+used by the cluster, and needs only **read**. Never reuse one key for both — a leaked pull
+secret should not be able to overwrite images.
 
 Drop step 3 only when the image genuinely belongs to someone else and is already public —
 listing an irrelevant step makes the other three look optional too. Do **not** drop it by
@@ -974,6 +991,44 @@ arranging for the user's own image to be public.
 
 Also ask, if you do not already know them: the **Dockerfile path** and the **branch** that
 should trigger a deploy.
+
+**How the build job logs in is a choice, not a property of the registry.** Every option ends
+at the same \`docker/login-action\`; only what it is handed differs. Ask, with choices and the
+free-text escape, like any other decision:
+
+- **OAuth2 — a short-lived token minted during the run.** A provider step exchanges a
+  long-lived credential for an access token, and the login uses a fixed username with that
+  token as the password. Artifact Registry does this with
+  \`google-github-actions/auth\` + \`oauth2accesstoken\`, which is what the template below
+  uses. **Recommend this where it exists:** the value in the registry login expires in an
+  hour, so a leaked build log ages out.
+- **Username and password (or token).** A static secret handed straight to
+  \`docker/login-action\`. Simpler, works everywhere, and the credential is long-lived — so
+  it matters more where it is stored and how it is rotated.
+
+⚠️ **Several registries support both, so do not decide from the registry name.** Artifact
+Registry takes \`_json_key\` plus the JSON key as an ordinary username/password pair; GHCR
+takes the injected \`GITHUB_TOKEN\` *or* a PAT. Ask which they want.
+
+What each option needs, once they have chosen:
+
+- **GHCR, username/password.** ⚠️ Usually **nothing to create**: Actions injects
+  \`\${{ secrets.GITHUB_TOKEN }}\`, so the job needs only \`permissions: packages: write\` and
+  \`username: \${{ github.actor }}\`. Say so rather than asking for a PAT they do not need —
+  though a PAT is the right answer when the push crosses into another org or repository,
+  which \`GITHUB_TOKEN\` cannot do.
+- **Artifact Registry, OAuth2.** The JSON key as \`GOOGLE_CREDENTIALS\`, exactly as the
+  template uses it. Mention Workload Identity Federation if they already have it — keyless,
+  nothing to rotate — but do not push them into setting it up mid-deploy.
+- **Artifact Registry, username/password.** Username is the literal \`_json_key\`, password
+  is the whole JSON key. No provider step, so it is the shorter workflow; the trade is a
+  long-lived key in GitHub Secrets.
+- **Docker Hub, username/password.** \`DOCKERHUB_USERNAME\` and \`DOCKERHUB_TOKEN\`, the token
+  from Account Settings → Security → New Access Token with **Read & Write**. Not the account
+  password.
+
+Whichever they pick, the **pull** secret in step 3 is still required for a private image:
+the cluster is not GitHub Actions and does not see any of this.
 
 **Keep in reserve, for when they ask or hit a problem:**
 - It has to be a service account, not their own login: user bearer tokens expire after 7
@@ -987,9 +1042,44 @@ should trigger a deploy.
   routes say \`FORBIDDEN\`. All three mean the same thing here — check membership first.
 - The workflow maps the two Nortezh secrets into \`SA_AUTH_EMAIL\` / \`SA_AUTH_KEY\`, which is
   what \`Nortezh/nortezh-action\` reads. Renaming the secrets means changing both places.
-- GHCR or Docker Hub instead of Artifact Registry: the auth and login steps differ — adapt
-  them rather than forcing this shape. A private registry also needs a pull secret on the
-  Nortezh side so the cluster can pull — **which the user creates, not you** (6.2).
+- **Only the login changes between options.** Everything else in the template — buildx, the
+  \`image\` step, \`build-push-action\`, and the whole deploy job — stays exactly as written,
+  because the deploy job authenticates to *Nortezh*, not to the registry. Replace only the
+  \`google-github-actions/auth\` + \`docker/login-action\` pair:
+
+  \`\`\`yaml
+  # username/password — GHCR with the injected token. Needs packages: write on this job.
+  - uses: docker/login-action@v1
+    with:
+      registry: ghcr.io
+      username: \${{ github.actor }}
+      password: \${{ secrets.GITHUB_TOKEN }}
+  \`\`\`
+
+  \`\`\`yaml
+  # username/password — Artifact Registry without the provider step
+  - uses: docker/login-action@v1
+    with:
+      registry: <registry-host>
+      username: _json_key
+      password: \${{ secrets.GOOGLE_CREDENTIALS }}
+  \`\`\`
+
+  \`\`\`yaml
+  # username/password — Docker Hub
+  - uses: docker/login-action@v1
+    with:
+      username: \${{ secrets.DOCKERHUB_USERNAME }}
+      password: \${{ secrets.DOCKERHUB_TOKEN }}
+  \`\`\`
+
+  ⚠️ **GHCR also needs \`permissions: packages: write\` on the build job**, which the template
+  does not carry because Artifact Registry does not need it. Omitting it fails the push with
+  a 403 that reads like a bad credential and sends people to regenerate a token that was
+  fine.
+
+  A private image still needs a pull secret on the Nortezh side whichever login you use —
+  **the user creates that, not you** (6.2).
 
 #### Then write \`.github/workflows/deploy-<name>.yaml\`
 

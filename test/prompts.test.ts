@@ -681,6 +681,10 @@ const NOT_ERROR_CODES = new Set([
   'GOOGLE_CREDENTIALS',
   'SA_AUTH_EMAIL',
   'SA_AUTH_KEY',
+  // GitHub Actions secrets used by the registry login variants.
+  'GITHUB_TOKEN',
+  'DOCKERHUB_USERNAME',
+  'DOCKERHUB_TOKEN',
 ])
 
 test('every error code the prompts cite is one an exposed tool can return', () => {
@@ -767,6 +771,51 @@ test('a withheld tool is never resolved by making something public', () => {
   // about third-party images and must not read as a suggestion.
   assert.match(flat, /\*\*The user's own application image\*\* — assume \*\*private\*\*/)
   assert.match(flat, /not\*\* a suggestion to publish the user's own/)
+})
+
+test('the CI push credential is created by the user, in GitHub Secrets', () => {
+  // Push (Actions, write) and pull (cluster, read) are different credentials with different
+  // scopes, and conflating them is the common mistake. Neither passes through the chat: the
+  // user pastes the value into GitHub Secrets and tells the model only the name.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*2\. A push credential for the registry\.\*\*/)
+  assert.match(flat, /straight into GitHub Secrets, never through you/)
+  assert.match(flat, /Paste each value straight in — do not send them to me/)
+  assert.match(flat, /step 2 is \*\*push\*\*.*needs \*\*write\*\*/)
+  assert.match(flat, /Never reuse one key for both/)
+})
+
+test('the registry login style is asked, not inferred from the registry', () => {
+  // Artifact Registry does both: oauth2accesstoken via google-github-actions/auth, or
+  // _json_key as an ordinary username/password. GHCR does both too. Picking from the
+  // registry name alone silently makes a security decision the user never saw.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /How the build job logs in is a choice, not a property of the registry/)
+  assert.match(flat, /\*\*OAuth2 — a short-lived token minted during the run\.\*\*/)
+  assert.match(flat, /\*\*Username and password \(or token\)\.\*\*/)
+  assert.match(flat, /so do not decide from the registry name/)
+  // The reason OAuth2 is the recommendation, not just that it is.
+  assert.match(flat, /expires in an hour, so a leaked build log ages out/)
+})
+
+test('the workflow variants swap only the login step', () => {
+  // The deploy job authenticates to Nortezh, not the registry, so it is identical across
+  // every option. Saying "adapt it" invites rewriting the parts that must not change.
+  const text = deployStack!.render({})
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*Only the login changes between options\.\*\*/)
+  assert.match(text, /username: \$\{\{ github\.actor \}\}/)
+  assert.match(text, /password: \$\{\{ secrets\.GITHUB_TOKEN \}\}/)
+  assert.match(text, /username: _json_key/)
+  assert.match(text, /password: \$\{\{ secrets\.DOCKERHUB_TOKEN \}\}/)
+  // The omission that fails as a 403 and looks like a bad credential.
+  assert.match(flat, /GHCR also needs `permissions: packages: write` on the build job/)
+  // Same escaping trap as the main workflow block — one backslash too many ships a literal.
+  assert.equal(
+    /\\\$\{\{ (github|secrets|steps|needs)\./.test(text),
+    false,
+    'a backslash leaked into the registry login snippets',
+  )
 })
 
 test('the pull secret handoff has reserve detail for other registries', () => {
