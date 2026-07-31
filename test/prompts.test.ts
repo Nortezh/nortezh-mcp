@@ -466,6 +466,81 @@ test('every resource in the model answers the same questions', () => {
   }
 })
 
+// ---------------------------------------------------------------------------------------
+// Contradiction tests.
+//
+// Every test above checks that a fact is STATED somewhere. That is what let four errors
+// survive the last review: the model was corrected and the procedure kept the old claim, so
+// the same prompt asserted both. These check the procedure does not contradict the model.
+// ---------------------------------------------------------------------------------------
+
+test('the procedure agrees with the model on which resources can fail', () => {
+  // domain/status.go declares StatusError and domain.go:209 enums it as a string. Saying
+  // "only the deployment can fail" made the model treat a domain stuck in `error` as a
+  // domain still converging, and wait on something that will never change.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/only the deployment can fail/i.test(flat), false)
+  assert.equal(/Only the deployment reports a string/i.test(flat), false)
+  assert.match(flat, /the same two can fail: deployment and domain/)
+  assert.match(flat, /\| domain, CDN \| `domainGet` \| `status` is the \*\*string\*\* `"success"` \| yes/)
+})
+
+test('the procedure does not present DISK_IN_USE as protection', () => {
+  // GetBindingDeployments (disk.go:700) queries jsonb_each(extra_disk_mount_data) and never
+  // reads the `disk` column, and disk.delete refuses only when that list is non-empty. B1
+  // used to say "diskDelete fails with DISK_IN_USE while any still does" — which reads as a
+  // guarantee and licenses deleting a mounted volume.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/`diskDelete` fails with `DISK_IN_USE` while any still does/.test(flat), false)
+  assert.match(flat, /neither `diskGet` nor `DISK_IN_USE` will tell you about most of them/)
+  assert.match(flat, /check its `disk` field yourself/)
+})
+
+test('the ground rules do not license sending only the changed fields', () => {
+  // deployment.go:399 requires image on every call, and an omitted mountDataSecretPaths
+  // wipes secret file values — so "send the fields that differ and nothing else" is the
+  // data-loss path, stated as a rule.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/send the fields that differ and nothing else/.test(flat), false)
+  assert.match(flat, /is \*\*not\*\* a safe rule here/)
+})
+
+test('every destructive tool is named in the confirm-first rule', () => {
+  // Derived from the generated annotations rather than a hand-written list, so adding a
+  // destructive route to the allowlist fails here until the prompt mentions it.
+  const text = deployStack!.render({})
+  for (const tool of TOOLS.filter((candidate) => candidate.destructive)) {
+    // The three engine deletes are covered by one `db*Delete` wildcard.
+    const needle = /^db[A-Z]/.test(tool.name) ? 'db*Delete' : tool.name
+    assert.ok(text.includes(needle), `${tool.name} is destructive but the prompt never names it`)
+  }
+})
+
+test('deploymentGet.url is not described as always working', () => {
+  // An external ingress exists only for a non-internal WebService, but `url` is populated
+  // for every type — so "every deployment already has a working URL" sent the model off to
+  // verify a Worker over HTTP.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/Every deployment already has a working URL/.test(flat), false)
+  assert.match(flat, /it only \*resolves\* for a \*\*non-internal WebService\*\*/)
+})
+
+test('the rules heading counts the rules that are actually there', () => {
+  const text = deployStack!.render({})
+  assert.match(text, /## The four rules that matter most/)
+  assert.match(text, /\*\*4\. /)
+  assert.equal(/\n\*\*5\. /.test(text), false)
+  assert.match(text, /And underneath all four:/)
+})
+
+test('the model does not claim the API annotation contradicts it', () => {
+  // nortezh-backend 13c1283 corrected revision.go's rollback annotation to say it rewinds.
+  // The parenthetical telling the model to distrust the generated tool description outlived
+  // the thing it described.
+  const model = resources!.render({}).replace(/\s+/g, ' ')
+  assert.equal(/the API's own annotation is wrong/.test(model), false)
+})
+
 test('an argument value cannot expand the other placeholder', () => {
   // Two chained replaces let the first substitution's OUTPUT become the second's subject,
   // so an argument of literally "{{RESOURCE_MODEL}}" was expanded — splicing the whole

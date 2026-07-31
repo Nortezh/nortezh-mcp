@@ -40,7 +40,7 @@ const DEPLOY_STACK = `You are working on an application stack on Nortezh using t
 
 {{GIVEN}}
 
-## The three rules that matter most
+## The four rules that matter most
 
 **1. Ask, do not assume — and always ask with choices.**
 
@@ -93,7 +93,7 @@ reach one:
 The test is simple: could they act on your message without reading anything else? If yes,
 send it. If it needs a paragraph of context first, you have written too much.
 
-And underneath all three: **understanding the user's project is the whole job.** Its
+And underneath all four: **understanding the user's project is the whole job.** Its
 architecture, its service components, and above all **how each service is configured** —
 that is what every resource you create is derived from. Get the shape of the system right
 and the Nortezh calls are mechanical. Get it wrong and you will create real infrastructure
@@ -215,7 +215,8 @@ architecture.
 
 ## A1. The intent
 
-Ask this first, before anything else, unless the user already made it unambiguous:
+With A0 confirmed, this is the next thing to settle — before any call that changes anything,
+and unless the user already made it unambiguous:
 
 - **Patch an existing deployment** — change env vars, scale, resources, image, port
 - **Add something to an existing project** — a new deployment, database, disk or domain
@@ -289,8 +290,6 @@ checking whether the thing already exists.
 
 ## ⚠️ Readiness is not reported the same way twice
 
-Get this wrong and you will either move on too early or wait forever.
-
 The model above gives this per resource; here it is as one table, because getting it wrong
 means either moving on too early or waiting forever.
 
@@ -301,13 +300,16 @@ means either moving on too early or waiting forever.
 | disk | \`diskGet\` | \`actionStatus\` is the **number \`2\`** | no |
 | route | \`routeGet\` | \`status\` is the **number \`2\`** | no |
 | pull secret | \`pullsecretGet\` | \`status\` is the **number \`2\`** | no |
-| domain, non-CDN | — | **immediately**, at create | no |
-| domain, CDN | \`domainGet\` | \`status\` reports success | no |
+| domain, non-CDN | — | **immediately** — written \`success\` at create | no; nothing runs |
+| domain, CDN | \`domainGet\` | \`status\` is the **string** \`"success"\` | yes — \`"error"\` |
 | project, env group | — | **immediately** | no |
 
-Only the deployment reports a string, and only the deployment can fail. Everything else that
-is asynchronous sits at \`1\` indefinitely when it goes wrong — so bound those waits to a few
-minutes and then tell the user, rather than looping.
+⚠️ **Two resources report a string, and the same two can fail: deployment and domain.** A
+domain's \`status\` is one of \`pending\`, \`success\`, \`error\`, \`verify\` — \`error\` is a real
+outcome, not a placeholder. Database, disk, route and pull secret report a bare integer
+(\`1\` pending, \`2\` success) with **no failure value at all**, so one of those that goes wrong
+sits at \`1\` indefinitely — bound those waits to a few minutes and then tell the user, rather
+than looping.
 
 Poll every few seconds, not faster.
 
@@ -337,9 +339,12 @@ Creating a new one:
   memory **256–4096** MiB, storage in MB. Ask for these with a recommendation like any
   other sizing decision — do not pick silently.
 - \`diskCreate\` for persistent storage. A disk belongs to one location. ⚠️ **Several
-  deployments can mount the same disk** — \`diskGet\` lists every one of them, and
-  \`diskDelete\` fails with \`DISK_IN_USE\` while any still does. Check that list before
-  proposing a delete.
+  deployments can mount the same disk, and neither \`diskGet\` nor \`DISK_IN_USE\` will tell you
+  about most of them.** Both see only \`extraDiskMountData\` mounts and never the primary
+  \`disk\` field, so \`diskDelete\` will destroy a volume a running deployment is using without
+  raising anything. An empty \`bindingDeployments\` is not evidence the disk is free — before
+  proposing a delete, read each deployment with \`deploymentGet\` and check its \`disk\` field
+  yourself.
 - Wait for each per the table above. For a database the connection details (\`host\`, \`port\`)
   are **empty strings until it is ready** — that is precisely why this comes before the
   deployment.
@@ -485,8 +490,10 @@ On \`"failed"\`, read \`logUrl\` and \`statusUrl\` from \`deploymentGet\` and re
 
 \`routeCreate\` against any other type fails with \`CAN_MAP_ONLY_WEB_SERVICE\`.
 
-Every deployment already has a working URL; \`deploymentGet\` returns it as \`url\`. This
-section is only for a **custom** domain.
+\`deploymentGet\` returns a \`url\` for every deployment, but ⚠️ it only *resolves* for a
+**non-internal WebService** — the string is populated regardless of type, so do not read it
+back as proof the service is reachable. This section is only for a **custom** domain on top
+of that URL.
 
 **1. \`domainCreate\`.** Ask about \`cdn\` first — it defaults to \`false\` and it is not a
 detail you can change your mind about cheaply:
@@ -611,7 +618,9 @@ should trigger a deploy.
 
 ### Then write \`.github/workflows/deploy-<name>.yaml\`
 
-Fill in every placeholder from the answers above — do not leave a single \`<...>\` behind.
+Fill in every placeholder from the answers above — do not leave a single \`<...>\` behind. Two
+lines are conditional rather than fillable: drop \`pull_secret\` entirely when the registry is
+public, and drop \`port\` for a \`Worker\` or \`CronJob\`.
 
 \`\`\`yaml
 name: Deploy <name>
@@ -709,10 +718,14 @@ report the result. That is the moment the placeholder is replaced by their appli
   (\`DEPLOYMENT_NAME_ALREADY_EXISTS\`, \`DISK_NAME_NOT_AVAILABLE\`, \`DATABASE_NAME_NOT_AVAILABLE\`)
   usually means the thing you wanted already exists, not that you need a different name —
   ask before renaming around it.
-- **Change the least you can.** \`deploymentDeploy\` patches, so send the fields that differ
-  and nothing else.
-- **Confirm before anything destructive.** \`deploymentDelete\`, \`diskDelete\`, \`domainDelete\`,
-  \`db*Delete\`, \`deploymentRollback\`: say exactly what will be destroyed, then wait.
+- **Change the least you can — but never less than the call requires.** \`deploymentDeploy\`
+  patches, so leave alone what you are not changing. ⚠️ "The fields that differ and nothing
+  else" is **not** a safe rule here: \`project\`, \`location\`, \`name\` and \`image\` are demanded
+  on every call, and omitting \`mountDataSecretPaths\` deletes rather than preserves. See B3.
+- **Confirm before anything destructive.** Every delete — \`deploymentDelete\` (which silently
+  takes its routes with it), \`diskDelete\`, \`domainDelete\`, \`routeDelete\`, \`envgroupDelete\`,
+  \`pullsecretDelete\`, \`db*Delete\` — plus \`deploymentRollback\`, and \`deploymentPause\`, which
+  stops a running workload. Say exactly what will be destroyed or stopped, then wait.
 - **Re-running must be safe.** Check for an existing resource before creating one. The user
   may be resuming a half-built stack.
 - **A tool error is real.** This API answers domain errors with HTTP 200 and \`ok:false\`; the
@@ -828,8 +841,7 @@ makes one.
 - **Mutable:** no. A snapshot; deploying again makes a new one.
 - ⚠️ \`deploymentRollback\` **rewinds** \`deployments.revision\` to an earlier number. It does
   **not** create a new revision, and does **not** restore env-group links or \`type\`. A
-  partial undo. (The tool description generated from the API says the opposite — the API's
-  own annotation is wrong there.)
+  partial undo.
 - \`deploymentLogRevision\` lists them, which is how you find a number to roll back to.
 
 ## Env group
