@@ -45,11 +45,38 @@ test('readiness is described differently for deployments and for databases/disks
   assert.match(text, /no failure value at all/)
 })
 
-test('the placeholder-first deployment sequence is spelled out', () => {
+test('the first deploy is expected to fail, and that is stated as expected', () => {
+  // The deployment is created pointing at <registry>/<path>:latest before CI has pushed
+  // anything, so the pull fails. A model that reads "failed" as a problem will retry it,
+  // dig through logUrl, or swap in nginx to get a green status — each of which breaks the
+  // flow at the point where it is working correctly.
   const text = deployStack!.render({})
-  assert.match(text, /nginx:latest/)
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(text, /<registry>\/<path>:latest/)
+  assert.match(flat, /That first deploy fails, and the failure is expected/)
+  assert.match(flat, /do not swap in `nginx` to get a green status/)
+  assert.match(flat, /A failed deployment here is the flow working/)
   assert.match(text, /deploymentCreate/)
   assert.match(text, /deploymentDeploy/)
+})
+
+test('the deployment flow is drawn, not only described', () => {
+  // Three actors and an expected failure in the middle. Prose makes the reader hold the
+  // handoffs in their head; the diagram shows which of them is acting at each step.
+  const text = deployStack!.render({})
+  assert.match(text, /you {24}user {18}github actions/)
+  assert.match(text, /actionStatus "failed" {3}⚠️ EXPECTED — nothing to pull/)
+  assert.match(text, /push <registry>\/<path>:<sha>/)
+  assert.match(text, /deployment\.create-revision/)
+  assert.match(text, /poll deploymentGet until actionStatus "success"/)
+})
+
+test('the pull secret must exist before CI pushes, not before the first deploy', () => {
+  // Both deploys fail without it, but only the second one is supposed to. A missing pull
+  // secret hides inside the expected failure and then surfaces as an infinite wait.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /The pull secret must exist before step 4\*\*, not before step 1/)
+  assert.match(flat, /hides inside an expected failure/)
 })
 
 test('it tells the model to ask with options rather than assume', () => {
@@ -344,7 +371,10 @@ test('type is documented as immutable after creation', () => {
   // type at create time or a Worker can never stop being a WebService.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /cannot be changed at all:\*\* `type`/)
-  assert.match(flat, /The placeholder is the image, and only the image/)
+  // It is the one field a later CI deploy cannot correct, so it has to be right at create
+  // even though the image it points at does not exist yet.
+  assert.match(flat, /`type` is immutable\*\*, so it has to be right at creation/)
+  assert.match(flat, /the one field a later CI deploy cannot fix/)
 })
 
 test('omitting mountDataSecretPaths is flagged as destructive', () => {
@@ -725,24 +755,38 @@ test('the rules heading counts the rules that are actually there', () => {
   assert.match(text, /And underneath all six:/)
 })
 
-test('images are never built locally — CI owns them', () => {
-  // A locally built image lives on one laptop; the cluster pulls from a registry, so it
-  // cannot be deployed at all. Pushing it by hand needs registry credentials, which is the
-  // same exposure as creating a pull secret.
+test('the image route is stated as a procedure, not as a prohibition', () => {
+  // Stated as "do not run docker build", the rule is a blocklist: it cannot enumerate
+  // podman, nerdctl, a Makefile target, or whatever comes next, and it leaves the model
+  // without an alternative so it improvises. Stating the one route that works covers every
+  // tool including the ones nobody has written yet.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /Never build or push a container image\. CI does that, not you/)
-  assert.match(flat, /Do not run `docker build`/)
+  assert.match(flat, /Images reach Nortezh one way: CI builds and pushes, then updates the deployment/)
+  assert.match(flat, /the \*\*full real config\*\*/)
+  assert.match(flat, /That workflow builds the image, pushes it, and sets the real tag on the deployment/)
   assert.match(flat, /"Already exists" means already pushed/)
-  // The placeholder path has to read as the default, not as a workaround.
+  // The prohibition survives, but as a consequence of the route rather than a rule of its own.
+  assert.match(flat, /which follows from the above rather than being a separate restriction/)
+  // This path has to read as the default, not as a workaround.
   assert.match(flat, /\*\*This is the normal path, not a fallback\.\*\*/)
 })
 
-test('the pull secret is handed to the user, never created', () => {
-  // pullsecretCreate takes serverUrl/username/password, so the only way to call it is for
-  // the user to paste live registry credentials into the conversation.
+test('credentials are governed by one positive invariant, not a blocklist', () => {
+  // "Never create a pull secret" plus "never ask for one" plus "never run gh auth token"
+  // plus "never read ~/.docker/config.json" is a list that can never be finished. "You work
+  // in names, never values" covers all of them, and the credentials nobody has invented yet.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /Never create a pull secret\. Hand the user instructions instead/)
-  assert.match(flat, /\*\*Never ask for a registry username, password, token or key\.\*\*/)
+  assert.match(flat, /Every credential travels one path: the user creates it, and tells you only its name/)
+  assert.match(flat, /You work in \*\*names\*\*, never values/)
+  // Each credential says where the user makes it and what comes back.
+  assert.match(flat, /Nortezh console → Pull Secrets/)
+  assert.match(flat, /the registry, then GitHub Secrets/)
+  // The old prohibitions are kept, but derived — including the local-credential probing
+  // (gh auth token, ~/.docker/config.json) that prompted this rewrite.
+  assert.match(flat, /consequences rather than extra rules/)
+  assert.match(flat, /You never need a credential's value\*\*, so never ask for one/)
+  assert.match(flat, /A credential on this machine is the wrong one\*\*, so there is nothing to look for/)
+  assert.match(flat, /The line is whether the file is checked in/)
   assert.match(flat, /should be rotated/)
   // And the handoff has to be actionable, not just a refusal. The credential does not
   // exist yet when the console form asks for it, so "make the token" has to be its own
@@ -754,7 +798,7 @@ test('the pull secret is handed to the user, never created', () => {
   // Ask which registry before handing over, or the user does the choosing.
   assert.match(flat, /ask which registry first/)
   // Public images need none; offering the step anyway makes the real ones look optional.
-  assert.match(flat, /a placeholder deploy never needs a pull secret/)
+  assert.match(flat, /deployment pulling only public images never needs one/)
 })
 
 test('a withheld tool is never resolved by making something public', () => {
@@ -763,10 +807,9 @@ test('a withheld tool is never resolved by making something public', () => {
   // pressure to route around it, and publishing is the cheapest route — it trades a console
   // step for permanently exposing every layer, build arg and baked-in file of the image.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /never route around the missing tool by weakening something else/i)
-  assert.match(flat, /\*\*Do not propose that, ever\*\*/)
+  assert.match(flat, /Blocked is not a reason to weaken something else/)
   assert.match(flat, /Registries are private by default and stay that way/)
-  assert.match(flat, /never to remove the thing that made it require permission/)
+  assert.match(flat, /Never remove the thing that made it require permission/)
   // The user's own image is private by default; "public needs no pull secret" is a fact
   // about third-party images and must not read as a suggestion.
   assert.match(flat, /\*\*The user's own application image\*\* — assume \*\*private\*\*/)
@@ -816,6 +859,22 @@ test('the workflow variants swap only the login step', () => {
     false,
     'a backslash leaked into the registry login snippets',
   )
+})
+
+test('the pull secret flow is drawn, including the reuse and public exits', () => {
+  // Same reason as the deployment flow: three actors, and two branches that end the
+  // procedure early. Written as prose the "one already exists, reuse it" path is the one
+  // that gets skipped, and a second secret gets requested for no reason.
+  const text = deployStack!.render({})
+  assert.match(text, /whose image is it\?/)
+  assert.match(text, /someone else's, public ──▶ no pull secret\. done\./)
+  assert.match(text, /one exists here ──▶ reuse its name/)
+  assert.match(text, /then STOP and wait/)
+  assert.match(text, /reply with the NAME/)
+  assert.match(text, /pullsecretList {2}⚠️ confirm it is really there, in this location/)
+  // The ordering constraint that ties it back to the deployment flow.
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /has to be in place before CI pushes \(rule 5, step 4\)/)
 })
 
 test('the pull secret handoff has reserve detail for other registries', () => {

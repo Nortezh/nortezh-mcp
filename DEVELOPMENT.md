@@ -89,7 +89,11 @@ the reasoning so the next person does not add it back, and `WITHHELD_TOOLS` in
 
 The same logic covers images: the prompt forbids `docker build` / `docker push` outright.
 A locally built image cannot be deployed (the cluster pulls from a registry) and pushing one
-by hand needs the same credentials. CI owns images; deployments start on a public placeholder.
+by hand needs the same credentials. CI owns images: a deployment is created pointing at the
+tag CI will push, fails once because nothing is there yet, and goes green when the workflow
+runs. Both rules are written as the route that works rather than as a list of forbidden
+commands — a blocklist cannot enumerate podman, nerdctl or whatever is next, and leaves the
+model to improvise an alternative.
 
 Output goes to a **terminal**, not a markdown viewer, so the templates use fenced blocks
 rather than pipe tables, and emoji chips only on plain lines — never inside the box-drawing

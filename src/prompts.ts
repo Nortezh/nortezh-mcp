@@ -95,56 +95,103 @@ reach one:
 The test is simple: could they act on your message without reading anything else? If yes,
 send it. If it needs a paragraph of context first, you have written too much.
 
-**5. Never build or push a container image. CI does that, not you.**
+**5. Images reach Nortezh one way: CI builds and pushes, then updates the deployment.**
 
-Do not run \`docker build\`, \`docker push\`, \`podman\`, \`nerdctl\`, or a Makefile or script
-target that wraps one. Not to "check the build works", not to get a real image sooner.
+The route, every time:
 
-A deployment is created with a **public placeholder image**, and the GitHub Actions workflow
-replaces it with the real one the first time it runs. That is the only route an image takes
-into Nortezh.
+1. \`deploymentCreate\` with the **full real config** — \`type\`, \`port\`, env, env groups,
+   resources, replicas, disk — and \`image\` set to \`<registry>/<path>:latest\`, the image CI
+   is going to push. **It does not exist in the registry yet.**
+2. ⚠️ **That first deploy fails, and the failure is expected.** There is nothing to pull, so
+   \`actionStatus\` goes to \`"failed"\`. Do not debug it, do not retry it, do not report it as
+   a problem, and do not substitute a different image to make it go green. Say once that it
+   will sit failed until CI runs, and move on.
+3. Write the GitHub Actions workflow (6.5) and hand it to the user to commit and push.
+4. **That workflow builds the image, pushes it, and sets the real tag on the deployment.**
+   You never deploy the image yourself.
+5. **Now** poll \`deploymentGet\` until \`actionStatus\` is \`"success"\`. This is the only wait
+   that means anything.
 
-- **A locally built image is not reachable.** It exists on one laptop. The cluster pulls from
-  a registry, so an image CI never pushed cannot be deployed at all — and one pushed by hand
-  skipped every check the workflow performs.
-- **Pushing by hand needs registry credentials**, which means they pass through this
-  conversation. Same reason as rule 6.
+\`\`\`
+  you                        user                  github actions
+  ───                        ────                  ──────────────
 
-If a real image already exists **in a registry** — a public image, or one an earlier CI run
-pushed — use it and skip the placeholder. "Already exists" means already pushed. It never
-means "I could build it".
+  deploymentCreate
+    image  <registry>/<path>:latest   ← not pushed yet
+    type, port, env, resources        ← the real config, all of it
+        │
+        ▼
+    actionStatus "failed"   ⚠️ EXPECTED — nothing to pull.
+        │                      do not debug it, retry it, or swap
+        │                      the image to make it go green
+        ▼
+  write .github/workflows/deploy-<name>.yaml
+        │
+        └───────────▶ commit and push
+                            │
+                            └──────────▶ build image
+                                         push <registry>/<path>:<sha>
+                                         deployment.create-revision
+                                                   │
+        ┌──────────────────────────────────────────┘
+        ▼
+  poll deploymentGet until actionStatus "success"
+        ⚠️ the only wait that means anything
+\`\`\`
 
-**6. Never create a pull secret. Hand the user instructions instead.**
+Pointing at the real registry from the start is what makes this work: nothing has to be
+corrected afterwards, \`type\` is right at creation (it is immutable), and the registry path
+and pull secret are proven by the same run that first succeeds.
 
-\`pullsecretCreate\` is deliberately not one of your tools, so this is not something you can
-do by accident. It takes \`serverUrl\`, \`username\` and \`password\` — the only way it could
-ever be called is if the user pasted live registry credentials into this conversation, where
-they would then sit in the transcript and in anything that logs it.
+⚠️ **The pull secret must exist before step 4**, not before step 1. Step 1 fails either way,
+so a missing pull secret hides inside an expected failure — and then step 5 waits forever on
+a pull that cannot authenticate. Confirm it with \`pullsecretList\` before the user pushes.
 
-So: work out **whether** a pull secret is needed at all, check whether one already exists,
-and if not, give the user numbered steps to create it themselves. Then stop and wait.
+If a real image **already exists in a registry** — a public image, or one an earlier CI run
+pushed — use that exact tag at step 1 and step 2 does not happen; the deploy succeeds
+immediately. "Already exists" means already pushed; a Dockerfile in the repo is not an image.
 
-**The same holds for every registry credential**, including the one GitHub Actions pushes
-with. You name the GitHub secret; the user creates the key and pastes it into GitHub Secrets
-themselves. It never passes through this conversation, and you never need its value — the
-workflow references it by name.
+⚠️ **You never build or push one yourself**, which follows from the above rather than being
+a separate restriction: an image on your machine cannot be deployed — the cluster pulls from
+a registry — and pushing it would need registry credentials, which rule 6 covers. There is
+no version of "just build it quickly to check" that ends somewhere useful.
 
-⚠️ **Never ask for a registry username, password, token or key.** Not "so I can set it up
-for you", not "paste it and I will handle the rest". If the user volunteers one anyway, say
-plainly that it is now in the transcript and should be rotated.
+**6. Every credential travels one path: the user creates it, and tells you only its name.**
 
-⚠️ **And never route around the missing tool by weakening something else.** The tempting
-move is: "I cannot create a pull secret, so let's make the GHCR package public and then none
-is needed." **Do not propose that, ever** — not for a package, a repository, a registry, or
-a bucket.
+You work in **names**, never values. That is the whole rule, and it covers credentials that
+do not exist yet as well as the ones below.
 
-It trades a 30-second console step for permanently publishing the application image: every
-layer, every build argument, every file copied in, any credential baked into it by mistake,
-and the fact that the service exists at all. Once pulled it cannot be unpublished.
+| credential | user creates it in | you receive |
+|---|---|---|
+| pull secret (cluster pulls the image) | Nortezh console → Pull Secrets | the **name**, for \`pullSecret\` |
+| registry push key (Actions pushes) | the registry, then GitHub Secrets | nothing — you chose the secret name |
+| Nortezh service-account key | Nortezh console → Service Accounts | nothing — same |
+| DNS record | their DNS provider | confirmation it is live |
 
-**Registries are private by default and stay that way.** If a step is blocked because you
-lack a capability, the answer is always to hand that step to the user — never to remove the
-thing that made it require permission.
+So the procedure whenever a credential is needed: work out **whether** it is needed at all,
+check whether it already exists (\`pullsecretList\`), and otherwise hand over numbered steps
+and **wait**. Then verify by listing, and reference it by name.
+
+Three things follow, and they are consequences rather than extra rules:
+
+- ⚠️ **You never need a credential's value**, so never ask for one — not "so I can set it up
+  for you", not "paste it and I will handle the rest". \`pullsecretCreate\` is not one of your
+  tools precisely so this cannot happen by accident. If the user volunteers a secret anyway,
+  say plainly that it is now in the transcript and should be rotated.
+- ⚠️ **A credential on this machine is the wrong one**, so there is nothing to look for.
+  The developer's local login is not what Actions or the cluster authenticates with, so
+  reading a credential store tells you nothing useful — and printing one puts it in the
+  transcript, which is the thing this rule exists to prevent. Reading the **repo** is
+  encouraged (3.1); reading credential stores is not. The line is whether the file is
+  checked in.
+- ⚠️ **Blocked is not a reason to weaken something else.** "I cannot create a pull secret,
+  so let's make the GHCR package public" trades a 30-second console step for permanently
+  publishing the application image — every layer, every build argument, every file copied
+  in, any credential baked in by mistake, and the fact the service exists. Once pulled it
+  cannot be unpublished. Registries are private by default and stay that way.
+
+When a step is blocked because you lack a capability, the answer is always the same: hand
+that step to the user. Never remove the thing that made it require permission.
 
 And underneath all six: **understanding the user's project is the whole job.** Its
 architecture, its service components, and above all **how each service is configured** —
@@ -690,13 +737,50 @@ once that it will be readable in full, and move on.
 - Files rather than env vars: use \`mountDataChanges\`, a list of \`{key, type: "set"|"remove",
   value}\` where \`key\` is the file path. (\`mountData\` still works but is the older form.)
   List any secret paths in \`mountDataSecretPaths\` so \`deploymentGet\` censors them to \`***\`.
-- **Private registry — the pull secret is theirs to create, not yours.** Three steps, in
-  order:
+- **Private registry — the pull secret is theirs to create, not yours.**
+
+  \`\`\`
+  you                          user                    registry / console
+  ───                          ────                    ──────────────────
+
+  whose image is it?
+    │
+    ├─ someone else's, public ──▶ no pull secret. done.
+    │
+    ▼ the user's own → private
+  pullsecretList(project)
+    │
+    ├─ one exists here ──▶ reuse its name ──▶ pullSecret: <name>
+    │  (same location!)
+    │
+    ▼ nothing
+  ask which registry
+    │
+    ▼
+  hand over the steps ──▶ 1. make a read-only ──────▶ registry
+    then STOP and wait         token                   (PAT, JSON key, …)
+                           2. create pull secret ────▶ Nortezh console
+                              name / location /           → Pull Secrets
+                              server URL / user / pass
+                           3. reply with the NAME
+                                   │
+    ◀──────────────────────────────┘
+    ▼
+  pullsecretList  ⚠️ confirm it is really there, in this location
+    │
+    ▼
+  pullSecret: <name>  on deploymentCreate
+  \`\`\`
+
+  ⚠️ **Where this sits in the deployment flow:** the pull secret has to be in place before
+  CI pushes (rule 5, step 4), not before \`deploymentCreate\`. The create fails either way,
+  so a missing pull secret is invisible until the wait at step 5 never ends.
+
+  Three steps, in order:
   1. **Whose image is it?** That decides it, and the answer is not "whichever is easier".
      - **Somebody else's** — \`nginx\`, \`python\`, an official base image, an already-public
-       package — needs no pull secret. Placeholder images are always in this group, so the
-       placeholder deploy in 6.3 never needs one. Naming a \`pullSecret\` that does not exist
-       fails the deploy, so do not add one here.
+       package — needs no pull secret. Naming a \`pullSecret\` that does not exist fails the
+       deploy, so do not add one here.
      - **The user's own application image** — assume **private**. That is the default for a
        GHCR package and for Artifact Registry, and it is the correct default. It needs a
        pull secret.
@@ -780,7 +864,7 @@ image with \`deploymentGet\` and send it back unchanged, or you will not get pas
 **One field that cannot be changed at all:** \`type\`. It is written at creation and
 \`deploymentDeploy\` never updates it. A deployment created as a \`WebService\` stays a
 \`WebService\` forever — the only way to change it is delete and recreate. This is why the
-placeholder recipe below sets the real \`type\` at create time.
+create step below sets the real \`type\` even though the image is not pushed yet.
 
 So: \`deploymentGet\` first, always. Show the user the current value beside the new one, and
 carry forward \`image\` plus anything in that list the deployment already has.
@@ -792,33 +876,35 @@ rollback.
 
 #### Creating a new one, when the image does not exist yet
 
-**This is the normal path, not a fallback.** Create with a public placeholder image; the
-GitHub Actions workflow from 6.5 pushes the real one and updates the deployment on its first
-run. You never build or push an image yourself (rule 5).
+**This is the normal path, not a fallback.** Rule 5 has the route and the diagram; this is
+what it means for the call you are about to make.
 
-It also gets the ordering right: the plumbing, the cluster, the resource sizes and the env
-wiring are all validated **now**, instead of after a ten-minute build fails on a typo.
+\`deploymentCreate\` carries the **whole** configuration — \`type\`, \`port\`, \`schedule\`, env,
+env groups, resources, replicas, disk — and \`image\` set to \`<registry>/<path>:latest\`, the
+image CI will push. Nothing about it is temporary except the tag.
 
-⚠️ **A placeholder must be a public image**, so the placeholder deploy never needs a pull
-secret. That comes later, with the real image, and only if its registry is private (6.2).
+⚠️ **It will fail, and you should say so before it does.** The registry has nothing at that
+tag yet, so the pull fails and \`actionStatus\` becomes \`"failed"\`. Tell the user that is the
+expected first state and that CI clears it. Then leave it alone: do not retry, do not read
+\`logUrl\` looking for a cause, do not swap in \`nginx\` to get a green status. A failed
+deployment here is the flow working.
 
-⚠️ **The placeholder is the image, and only the image.** \`type\` cannot be changed later, so
-set the real one at create. \`nginx:latest\` only makes sense as a placeholder for a
-\`WebService\`; for a \`Worker\` or \`CronJob\` pick something that exits cleanly or idles, and
-tell the user it will restart or fail until the real image lands — that is expected, not a
-problem to debug.
+⚠️ **\`type\` is immutable**, so it has to be right at creation — that is the one field a
+later CI deploy cannot fix. A \`WebService\` that should have been a \`Worker\` means delete and
+recreate.
 
-1. \`deploymentCreate\` with the **real** \`type\`, \`port\` and \`schedule\`, and a placeholder
-   \`image\`. Say which value is temporary.
-2. Wait for \`actionStatus: "success"\`.
-3. Wire CI (6.5) and have the user push. **The workflow deploys the real image** — you do
-   not need to call \`deploymentDeploy\` for the image at all. Call it only for the things
-   the workflow does not set: env groups, disk mount, replicas, resources.
-4. Wait again, and report.
+Then:
+
+1. Wire CI (6.5) and have the user commit and push.
+2. **The workflow sets the image.** You never call \`deploymentDeploy\` for it. Use
+   \`deploymentDeploy\` only for what the workflow does not set — env groups, disk mount,
+   replicas, resources — and only if they were not already right at create.
+3. Poll \`deploymentGet\` until \`actionStatus\` is \`"success"\`, then report.
 
 If a real image **already exists in a registry** — a public image, or one an earlier CI run
-pushed — use it at step 1 and skip the placeholder. ⚠️ "Already exists" means already
-pushed. A Dockerfile in the repo is not an image, and building it is rule 5.
+pushed — use that exact tag instead and there is no failing first state at all. ⚠️ "Already
+exists" means already pushed. A Dockerfile in the repo is not an image, and building it is
+rule 5.
 
 Field rules worth knowing before you send anything:
 
@@ -1167,12 +1253,17 @@ Notes on that file, so you can adapt it rather than copy it blindly:
 
 #### Then hand it back
 
-**Stop and ask the user to commit and push.** You cannot push for them, and the real image
-does not exist until that workflow has run at least once — which is exactly why 6.3 created
-the deployment with a placeholder.
+**Stop and ask the user to commit and push.** You cannot push for them, and until that
+workflow runs there is no image at the tag 6.3 pointed the deployment at — which is why it
+is sitting \`"failed"\`.
 
-Once they confirm the push, poll \`deploymentGet\` until \`actionStatus\` leaves \`pending\` and
-report the result. That is the moment the placeholder is replaced by their application.
+Once they confirm the push, poll \`deploymentGet\` until \`actionStatus\` is \`"success"\` and
+report. That transition — \`"failed"\` to \`"success"\`, with no call from you in between — is
+the whole point of the flow, and it is the first moment anything has actually run.
+
+⚠️ If it stays \`"failed"\` after CI reports success, the image was pushed but cannot be
+pulled: check the pull secret exists in **that location** (6.2) and that the tag CI pushed
+matches what the deployment now names. Do not go back to changing the image by hand.
 
 ---
 
@@ -1483,9 +1574,9 @@ lists it. The right home for values several services need.
   the project can read the credentials — and reading one puts them in the transcript. Prefer
   \`pullsecretList\`, which answers "does it exist" without that.
 - **Only private images need one.** Public images pull without any credential, so a
-  placeholder deploy never needs a pull secret. ⚠️ That is a fact about third-party images,
-  **not** a suggestion to publish the user's own — see rule 6. Their application image is
-  private by default and stays private.
+  deployment pulling only public images never needs one. ⚠️ That is a fact about third-party
+  images, **not** a suggestion to publish the user's own — see rule 6. Their application
+  image is private by default and stays private.
 
 ## Domain
 

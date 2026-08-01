@@ -87,10 +87,12 @@ runs as seven fixed steps:
 **Nothing is created, changed or deleted before step 5.** Steps 1–4 use read-only tools
 only, so it is safe to run it just to see what it would propose.
 
-**It never builds a container image.** New deployments are created with a public placeholder
-image, and the GitHub Actions workflow it writes replaces that with the real one on its first
-run. An image built on your laptop cannot be deployed anyway — the cluster pulls from a
-registry — and pushing one by hand would mean registry credentials going through the chat.
+**It never builds a container image.** A new deployment is created with its full config and
+`image` pointed at `<registry>/<path>:latest` — the tag CI will push. That first deploy
+**fails on purpose**, because nothing is at that tag yet; the workflow it writes for you then
+builds, pushes and sets the real tag, and the deployment goes green. An image built on your
+laptop cannot be deployed anyway — the cluster pulls from a registry — and pushing one by
+hand would mean registry credentials going through the chat.
 
 It offers what already exists ahead of creating anything, so re-running it on a half-built
 stack will not duplicate what you have. All arguments are optional (`project`, `name`,
