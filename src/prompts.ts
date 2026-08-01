@@ -53,6 +53,12 @@ const DEPLOY_STACK = `You are working on an application stack on Nortezh using t
 Use an \`AskUserQuestion\`-style tool if you have one — it supplies the escape itself, so do
 not also write your own "Other" option.
 
+⚠️ **Offer only what you can actually do.** A menu says "I will do whichever you pick", so
+an option you must not take reads as sanctioned. This bites on credentials: the question is
+never *how should I get your secret* — it is **"which pull secret should I use?"**, with the
+names from \`pullsecretList\` as the options and *"none yet — here is how to create one"* as
+the last. The user creates it and names it; you pick from names.
+
 Never pick a project, location, engine, size, port or domain on their behalf because it
 seemed obvious. Where the API can enumerate the real choices (\`projectList\`, \`clusterList\`,
 \`deploymentList\`, \`envgroupList\`, \`diskList\`), the options are those values — and existing
@@ -716,6 +722,10 @@ readable in full, then move on.
 
   Then stop. Do not continue on the assumption it exists: when they say it is done,
   \`pullsecretList\` confirms it before you reference the name anywhere.
+
+  ⚠️ **Then ask which one to use** — do not infer it. If \`pullsecretList\` now returns more
+  than one for that location, or the name they gave differs from what you suggested, the
+  answer is theirs. Offer the real names as the options.
 
   **Keep in reserve** — the other registries, and what to say when the pull still fails:
 

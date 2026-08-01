@@ -860,6 +860,20 @@ test('the workflow variants swap only the login step', () => {
   )
 })
 
+test('the credential question is which secret to use, not how to obtain one', () => {
+  // Observed for real, from a stale build: the model offered "I'll paste user + token" and
+  // "reuse local docker login" as menu options. That is rule 1 faithfully generating a list
+  // of rule 6 violations — nothing said the options had to be things it may do. A menu
+  // reads as "I will do whichever you pick", so listing it is offering it.
+  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  assert.match(flat, /Offer only what you can actually do/)
+  assert.match(flat, /the question is never \*how should I get your secret\*/)
+  assert.match(flat, /\*\*"which pull secret should I use\?"\*\*/)
+  assert.match(flat, /The user creates it and names it; you pick from names/)
+  // And after the handoff, the name is theirs to state rather than yours to assume.
+  assert.match(flat, /\*\*Then ask which one to use\*\* — do not infer it/)
+})
+
 test('the pull secret flow is drawn, including the reuse and public exits', () => {
   // Same reason as the deployment flow: three actors, and two branches that end the
   // procedure early. Written as prose the "one already exists, reuse it" path is the one
