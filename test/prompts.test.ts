@@ -53,8 +53,8 @@ test('the first deploy is expected to fail, and that is stated as expected', () 
   const text = deployStack!.render({})
   const flat = text.replace(/\s+/g, ' ')
   assert.match(text, /<registry>\/<path>:latest/)
-  assert.match(flat, /That first deploy fails, and the failure is expected/)
-  assert.match(flat, /do not swap in `nginx` to get a green status/)
+  assert.match(flat, /Say it will fail before it does/)
+  assert.match(flat, /do not swap in `nginx` for a green status/)
   assert.match(flat, /A failed deployment here is the flow working/)
   assert.match(text, /deploymentCreate/)
   assert.match(text, /deploymentDeploy/)
@@ -75,8 +75,8 @@ test('the pull secret must exist before CI pushes, not before the first deploy',
   // Both deploys fail without it, but only the second one is supposed to. A missing pull
   // secret hides inside the expected failure and then surfaces as an infinite wait.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /The pull secret must exist before step 4\*\*, not before step 1/)
-  assert.match(flat, /hides inside an expected failure/)
+  assert.match(flat, /The pull secret must exist before CI pushes, not before this create/)
+  assert.match(flat, /hides inside the expected failure/)
 })
 
 test('it tells the model to ask with options rather than assume', () => {
@@ -242,7 +242,7 @@ test('per-service configuration is treated as its own step', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /Every environment variable it reads/)
   assert.match(flat, /Which of those are secrets/)
-  assert.match(flat, /shared across services and which are per-service/)
+  assert.match(flat, /Which are shared and which are per-service/)
   // The compose-name translation is the classic cause of a stack that deploys but cannot
   // talk to itself.
   assert.match(flat, /Addresses change when they leave compose/)
@@ -254,7 +254,7 @@ test('the domain cdn flag is asked about, with its real gating', () => {
   // outright for a trial account. Silently sending true fails for reasons that read like
   // a permissions bug.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /`cdn: false` \(\*\*the default\*\*\)/)
+  assert.match(flat, /`cdn: false` \(\*\*the default\*\*, recommend it\)/)
   assert.match(flat, /DOMAIN_TRIAL_BILLING_CANNOT_CREATE_CDN_DOMAIN/)
 })
 
@@ -321,7 +321,7 @@ test('secrets are kept out of env groups', () => {
   // envgroup.go:151-155 — "stored and returned as PLAIN TEXT (never masked) — do not put
   // real secrets in an env group". Only mountDataSecretPaths censors (deployment.go:911).
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /Env groups are plain text and are never masked/)
+  assert.match(flat, /Only `mountDataSecretPaths` masks anything/)
   assert.match(flat, /do not put real secrets in an env group/)
   assert.match(flat, /mountData` \+ `mountDataSecretPaths`/)
   // And nothing may still be routing a password into an env group.
@@ -334,14 +334,14 @@ test('envgroupUpdate is described as a wholesale replace', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.match(flat, /`envgroupUpdate` REPLACES the whole map/)
   assert.match(flat, /omitting `data` entirely empties the group/)
-  assert.match(flat, /read the group with `envgroupGet` first/)
+  assert.match(flat, /Read with `envgroupGet`, change, send it all back/)
 })
 
 test('absent envGroups and empty envGroups are distinguished', () => {
   // deployment.go:370-372 — nil leaves the links unchanged, [] clears them. Sending [] to
   // mean "unchanged" strips the deployment's entire shared configuration.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  assert.match(flat, /`envGroups` absent means \*\*leave the current links alone\*\*/)
+  assert.match(flat, /`envGroups` absent means \*\*leave links alone\*\*/)
   assert.match(flat, /`\[\]` means \*\*unlink every group\*\*/)
 })
 
@@ -373,9 +373,8 @@ test('type is documented as immutable after creation', () => {
   assert.match(flat, /cannot be changed at all:\*\* `type`/)
   // It is the one field a later CI deploy cannot correct, so it has to be right at create
   // even though the image it points at does not exist yet.
-  assert.match(flat, /`type` is immutable\*\*, so it has to be right at creation/)
-  assert.match(flat, /the one field a later CI deploy cannot fix/)
-})
+  assert.match(flat, /\*\*`type` is immutable\*\* — the one field a later CI deploy cannot fix/)
+  })
 
 test('omitting mountDataSecretPaths is flagged as destructive', () => {
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
@@ -681,7 +680,7 @@ test('the ground rules do not license sending only the changed fields', () => {
   // data-loss path, stated as a rule.
   const flat = deployStack!.render({}).replace(/\s+/g, ' ')
   assert.equal(/send the fields that differ and nothing else/.test(flat), false)
-  assert.match(flat, /is \*\*not\*\* a safe rule here/)
+  assert.match(flat, /is \*\*not\*\* safe here/)
 })
 
 test('every destructive tool is named in the confirm-first rule', () => {
@@ -766,7 +765,7 @@ test('the image route is stated as a procedure, not as a prohibition', () => {
   assert.match(flat, /That workflow builds the image, pushes it, and sets the real tag on the deployment/)
   assert.match(flat, /"Already exists" means already pushed/)
   // The prohibition survives, but as a consequence of the route rather than a rule of its own.
-  assert.match(flat, /which follows from the above rather than being a separate restriction/)
+  assert.match(flat, /which follows from it rather than being a separate restriction/)
   // This path has to read as the default, not as a workaround.
   assert.match(flat, /\*\*This is the normal path, not a fallback\.\*\*/)
 })
@@ -796,7 +795,7 @@ test('credentials are governed by one positive invariant, not a blocklist', () =
   assert.match(flat, /\*\*2\. Create the pull secret\.\*\* Nortezh console/)
   assert.match(flat, /Tell me the name you used\*\* — the name only, never the token/)
   // Ask which registry before handing over, or the user does the choosing.
-  assert.match(flat, /ask which registry first/)
+  assert.match(flat, /Ask which registry before handing over/)
   // Public images need none; offering the step anyway makes the real ones look optional.
   assert.match(flat, /deployment pulling only public images never needs one/)
 })
@@ -812,7 +811,7 @@ test('a withheld tool is never resolved by making something public', () => {
   assert.match(flat, /Never remove the thing that made it require permission/)
   // The user's own image is private by default; "public needs no pull secret" is a fact
   // about third-party images and must not read as a suggestion.
-  assert.match(flat, /\*\*The user's own application image\*\* — assume \*\*private\*\*/)
+  assert.match(flat, /\*\*The user's own application image is private by default\.\*\*/)
   assert.match(flat, /not\*\* a suggestion to publish the user's own/)
 })
 
@@ -824,8 +823,8 @@ test('the CI push credential is created by the user, in GitHub Secrets', () => {
   assert.match(flat, /\*\*2\. A push credential for the registry\.\*\*/)
   assert.match(flat, /straight into GitHub Secrets, never through you/)
   assert.match(flat, /Paste each value straight in — do not send them to me/)
-  assert.match(flat, /step 2 is \*\*push\*\*.*needs \*\*write\*\*/)
-  assert.match(flat, /Never reuse one key for both/)
+  assert.match(flat, /Push is Actions' and needs \*\*write\*\*; pull is the cluster's and needs only \*\*read\*\*/)
+  assert.match(flat, /Never reuse one for both/)
 })
 
 test('the registry login style is asked, not inferred from the registry', () => {
@@ -874,7 +873,7 @@ test('the pull secret flow is drawn, including the reuse and public exits', () =
   assert.match(text, /pullsecretList {2}⚠️ confirm it is really there, in this location/)
   // The ordering constraint that ties it back to the deployment flow.
   const flat = text.replace(/\s+/g, ' ')
-  assert.match(flat, /has to be in place before CI pushes \(rule 5, step 4\)/)
+  assert.match(flat, /has to exist before CI pushes, not before `deploymentCreate`/)
 })
 
 test('the pull secret handoff has reserve detail for other registries', () => {
@@ -887,7 +886,7 @@ test('the pull secret handoff has reserve detail for other registries', () => {
   assert.match(flat, /Artifact Registry Reader/)
   assert.match(flat, /https:\/\/index\.docker\.io\/v1\//)
   // The two failures that do not look like what they are.
-  assert.match(flat, /does not grant that account access to the package/)
+  assert.match(flat, /does not grant that account access to the \*package\*/)
   assert.match(flat, /Wrong location is the silent one/)
 })
 

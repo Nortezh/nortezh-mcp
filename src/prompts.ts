@@ -42,119 +42,47 @@ const DEPLOY_STACK = `You are working on an application stack on Nortezh using t
 
 ## The six rules that matter most
 
-**1. Ask, do not assume — and always ask with choices.**
+**1. Ask, do not assume — and always ask with choices.** Every decision, without exception:
 
-Every decision below goes to the user as a question shaped like this, without exception:
+- **2–4 concrete options**, each saying what it costs or implies, not bare labels.
+- **Your recommendation first**, with the reason.
+- **A final option that is free text**, always — *"Something else — tell me"*. It is never
+  optional and never omitted because the list "covers everything"; it routinely does not,
+  and a question with no escape forces an answer that is merely close.
 
-- **2–4 concrete options**, each saying what it means and what it costs or implies. Not
-  bare labels — the user should be able to choose without reading the code.
-- **One of them marked as your recommendation**, listed first, with the reason.
-- **A final option that is free text**, always, for when none of the others is what they
-  want. Word it plainly: *"Something else — tell me"*. It is never optional and never
-  omitted because the listed options "cover everything"; they routinely do not, and a
-  question with no escape forces the user to accept an answer that is merely close.
-
-If you have an \`AskUserQuestion\`-style tool, use it — it supplies the free-text escape
-itself, so do not also write your own "Other" option. If you are asking in plain prose,
-write the escape yourself as the last item.
+Use an \`AskUserQuestion\`-style tool if you have one — it supplies the escape itself, so do
+not also write your own "Other" option.
 
 Never pick a project, location, engine, size, port or domain on their behalf because it
-seemed obvious. Where you can enumerate the real choices from the API (\`projectList\`,
-\`clusterList\`, \`deploymentList\`, \`envgroupList\`, \`diskList\`), the options must be those
-real values, not invented ones — and existing resources come first, before any "create a
-new one" option.
+seemed obvious. Where the API can enumerate the real choices (\`projectList\`, \`clusterList\`,
+\`deploymentList\`, \`envgroupList\`, \`diskList\`), the options are those values — and existing
+resources come first, before any "create a new one" option.
 
-**2. Deploying rarely means creating everything.** Most of the time something already
-exists: the project, the database, the deployment itself. Patching one config value on a
-running deployment is as much a "deploy" as building a stack from nothing, and it is the
-more common request. **Creating a resource that already exists is a failure, not a step.**
+**2. Deploying rarely means creating everything.** The project, the database, the deployment
+usually exist already; patching one config value is as much a "deploy" as building from
+nothing, and is the more common request. **Creating a resource that already exists is a
+failure, not a step.**
 
 **3. The seven steps are fixed; the operations inside them are not.** Follow Steps 1–7 in
-order every time — that is the flow, and Step 5 is a gate you do not cross early. But Step 6
-is a dependency graph and a menu, not a checklist: which operations run, and in what order,
-comes from the plan the user approved. Never work through 6.1–6.5 because they are numbered.
+order, and Step 5 is a gate you do not cross early. But Step 6 is a menu, not a checklist:
+what runs comes from the approved plan. Never work through 6.1–6.5 because they are numbered.
 
-**4. Some steps are theirs, not yours — hand them over cleanly and stop.**
+**4. Some steps are theirs, not yours — hand them over cleanly and stop.** DNS records,
+service-account keys, GitHub secrets, \`git push\`. When you reach one:
 
-Parts of this cannot be done through the API: adding DNS records, creating a service
-account and its key in the console, adding GitHub secrets, committing and pushing. When you
-reach one:
+- **Say what to do** as a short numbered list. Three or four steps, not a page.
+- **Give the exact values** — the record, the secret name, the URL. Without them the
+  instruction is useless.
+- **Leave the explanation out.** It buries the instruction and is usually not needed.
+- **Then stop and wait.** Do not continue assuming they did it.
+- **Keep the detail in reserve** for when they hit a problem or ask.
 
-- **Say plainly what they need to do**, as a short numbered list. Three or four steps, not
-  a page.
-- **Give the exact values** — the record, the secret name, the URL to open. Values are the
-  payload, not detail; without them the instruction is useless.
-- **Leave the explanation out.** Do not front-load why it works, what the alternatives are,
-  or what might go wrong. It buries the instruction, and most of the time none of it is
-  needed.
-- **Then stop and wait.** Do not continue on the assumption they did it. Ask them to confirm
-  when it is done.
-- **Keep the detail in reserve.** If they hit a problem, or ask, *then* give the specifics
-  for their situation. That is when it is useful and when they will actually read it.
-
-The test is simple: could they act on your message without reading anything else? If yes,
-send it. If it needs a paragraph of context first, you have written too much.
+The test: could they act on your message without reading anything else?
 
 **5. Images reach Nortezh one way: CI builds and pushes, then updates the deployment.**
-
-The route, every time:
-
-1. \`deploymentCreate\` with the **full real config** — \`type\`, \`port\`, env, env groups,
-   resources, replicas, disk — and \`image\` set to \`<registry>/<path>:latest\`, the image CI
-   is going to push. **It does not exist in the registry yet.**
-2. ⚠️ **That first deploy fails, and the failure is expected.** There is nothing to pull, so
-   \`actionStatus\` goes to \`"failed"\`. Do not debug it, do not retry it, do not report it as
-   a problem, and do not substitute a different image to make it go green. Say once that it
-   will sit failed until CI runs, and move on.
-3. Write the GitHub Actions workflow (6.5) and hand it to the user to commit and push.
-4. **That workflow builds the image, pushes it, and sets the real tag on the deployment.**
-   You never deploy the image yourself.
-5. **Now** poll \`deploymentGet\` until \`actionStatus\` is \`"success"\`. This is the only wait
-   that means anything.
-
-\`\`\`
-  you                        user                  github actions
-  ───                        ────                  ──────────────
-
-  deploymentCreate
-    image  <registry>/<path>:latest   ← not pushed yet
-    type, port, env, resources        ← the real config, all of it
-        │
-        ▼
-    actionStatus "failed"   ⚠️ EXPECTED — nothing to pull.
-        │                      do not debug it, retry it, or swap
-        │                      the image to make it go green
-        ▼
-  write .github/workflows/deploy-<name>.yaml
-        │
-        └───────────▶ commit and push
-                            │
-                            └──────────▶ build image
-                                         push <registry>/<path>:<sha>
-                                         deployment.create-revision
-                                                   │
-        ┌──────────────────────────────────────────┘
-        ▼
-  poll deploymentGet until actionStatus "success"
-        ⚠️ the only wait that means anything
-\`\`\`
-
-Pointing at the real registry from the start is what makes this work: nothing has to be
-corrected afterwards, \`type\` is right at creation (it is immutable), and the registry path
-and pull secret are proven by the same run that first succeeds.
-
-⚠️ **The pull secret must exist before step 4**, not before step 1. Step 1 fails either way,
-so a missing pull secret hides inside an expected failure — and then step 5 waits forever on
-a pull that cannot authenticate. Confirm it with \`pullsecretList\` before the user pushes.
-
-If a real image **already exists in a registry** — a public image, or one an earlier CI run
-pushed — use that exact tag at step 1 and step 2 does not happen; the deploy succeeds
-immediately. "Already exists" means already pushed; a Dockerfile in the repo is not an image.
-
-⚠️ **You never build or push one yourself**, which follows from the above rather than being
-a separate restriction: an image on your machine cannot be deployed — the cluster pulls from
-a registry — and pushing it would need registry credentials, which rule 6 covers. There is
-no version of "just build it quickly to check" that ends somewhere useful.
+The flow is drawn in 6.3. ⚠️ **You never build or push one yourself**, which follows from it
+rather than being a separate restriction: an image on your machine cannot be deployed — the
+cluster pulls from a registry — and pushing it needs credentials rule 6 covers.
 
 **6. Every credential travels one path: the user creates it, and tells you only its name.**
 
@@ -318,28 +246,24 @@ the run depends on, so fill in every column or mark it unknown and ask:
 
 #### Then the configuration of each service — the part most often got wrong
 
-Configuration is where a deployment silently misbehaves rather than failing loudly, so go
-through it deliberately, per service:
+Configuration is where a deployment misbehaves silently rather than failing loudly. Per
+service:
 
-- **Every environment variable it reads**, from \`.env.example\` and from the code. A variable
-  the app requires and nobody set does not fail at deploy time — it fails at run time, or
-  worse, falls back to a default that happens to work.
-- **Which of those are secrets** and which are ordinary config. Database passwords, API
-  keys, signing secrets, tokens. ⚠️ These do **not** belong in an env group — those are
-  plain text and never masked. They go in \`mountData\` with their paths in
-  \`mountDataSecretPaths\` (see 6.2). Never echo one back in a summary.
-- **Which are shared across services and which are per-service.** Shared ones — the database
-  URL, a queue address — belong in one env group every deployment references. Per-service
-  ones belong inline on that deployment. Getting this backwards means updating the same
-  value in five places later.
-- **Config files, not just variables.** A \`config.yaml\` or a certificate the app reads from
-  disk is \`mountDataChanges\`, not env.
-- ⚠️ **Addresses change when they leave compose.** In \`docker-compose\`, services reach each
-  other by compose service name (\`postgres:5432\`, \`http://api:8080\`). Deployed, those names
-  mean nothing: a managed database has a real \`host\` and \`port\` from \`db*Get\`, and a sibling
-  service is reached at its \`internalUrl\` from \`deploymentGet\`. **Every inter-service value
-  in the config has to be translated**, and this is the single most common cause of a stack
-  that deploys cleanly and then cannot talk to itself.
+- **Every environment variable it reads**, from \`.env.example\` and the code. One the app
+  requires and nobody set does not fail at deploy time — it fails at run time, or falls back
+  to a default that happens to work.
+- **Which of those are secrets** — passwords, API keys, signing secrets, tokens. ⚠️ Not in an
+  env group: \`mountData\` + \`mountDataSecretPaths\` (6.2). Never echo one back.
+- **Which are shared and which are per-service.** Shared → one env group every deployment
+  references. Per-service → inline on that deployment. Backwards means updating one value in
+  five places later.
+- **Config files count too.** A \`config.yaml\` or a certificate read from disk is
+  \`mountDataChanges\`, not env.
+- ⚠️ **Addresses change when they leave compose.** \`postgres:5432\` and \`http://api:8080\` mean
+  nothing once deployed: a managed database has a real \`host\`/\`port\` from \`db*Get\`, a
+  sibling service is reached at its \`internalUrl\` from \`deploymentGet\`. **Every
+  inter-service value has to be translated** — the most common cause of a stack that deploys
+  cleanly and cannot talk to itself.
 
 #### Confirm before proceeding
 
@@ -397,37 +321,28 @@ Ask only what the intent actually needs.
 - **Project** — from \`projectList\`. To create one you need a \`billingId\`, which
   \`projectGet\` or \`projectOverview\` returns for any project they already have. If they have
   none at all, that is a console handoff — never invent the UUID.
-- **Location** — \`clusterList\`. Keep the whole response; you need three things from it:
-  - \`cpu\` and \`memory\` are the **selectable sizes for that cluster** (e.g. \`"0.5"\`, \`"1"\`,
-    \`"512Mi"\`, \`"1Gi"\`). Resource requests must be one of these exact strings or the deploy
-    fails with \`DEPLOYMENT_INVALID_CPU\` / \`DEPLOYMENT_INVALID_MEMORY\`.
-  - \`features\` advertises what the cluster is capable of, as **present-when-supported**
-    keys (\`"database": {}\` means yes, an absent \`database\` key means no). ⚠️ It is a hint,
-    **not the gate**: managed databases are actually gated on a different table, and disks
-    on the **billing account's** feature flags, so \`db*Create\` can still fail with
-    \`DATABASE_CLUSTER_NOT_SUPPORTED\` and \`diskCreate\` with \`ACCESS_DENIED\` on a cluster
-    whose \`features\` looked fine. Use it to avoid obviously wrong offers; be ready for the
-    call to fail anyway, and report that as a platform setting rather than retrying.
-  - ⚠️ \`isTrial\` is a property of the **cluster** — "this cluster accepts trial workloads" —
-    not a statement about the caller's billing account. It does not tell you whether the
-    user is on trial. (If they are, \`clusterList\` already filters to clusters that accept
-    them.)
-- **Workload type**, for a new deployment — \`WebService\` (HTTP, gets a URL), \`Worker\` (no
-  ingress), \`CronJob\` (needs a crontab \`schedule\`), \`InternalTCPService\` (cluster-internal).
-- **Data dependencies** — offer *nothing* as a real first option when it is plausible:
-  - reuse a managed database that already exists (most common — you listed them in 3.2)
-  - create a new managed Postgres / Redis / Mongo
-  - a database hosted elsewhere entirely, in which case you only need env vars
-  - a persistent disk, new or existing
-  - nothing at all
-- **Configuration** — an env group (shared, reusable), inline env on the deployment, or
-  mounted files; and which of those values are secret.
-- **Exposure**, \`WebService\` only — the free \`*.nortezh.com\`-style URL it already gets, or
-  a custom domain as well.
-- **Continuous deployment** — whether to wire GitHub Actions, and the repo, branch,
-  registry and Dockerfile path.
-- **Scaling and size** — \`minReplica\` / \`maxReplica\`, cpu and memory from the cluster's own
-  lists. Recommend something and say why; never silently default.
+- **Location** — \`clusterList\`. Keep the whole response; three things matter:
+  - \`cpu\` / \`memory\` are that cluster's **selectable sizes** (\`"0.5"\`, \`"1"\`, \`"512Mi"\`).
+    Requests must be exact members or the deploy fails \`DEPLOYMENT_INVALID_CPU\` /
+    \`DEPLOYMENT_INVALID_MEMORY\`.
+  - \`features\` is present-when-supported (\`"database": {}\` means yes). ⚠️ A hint, **not the
+    gate** — databases are gated on a different table and disks on the **billing account**,
+    so \`db*Create\` can still fail \`DATABASE_CLUSTER_NOT_SUPPORTED\` and \`diskCreate\`
+    \`ACCESS_DENIED\`. Use it to avoid obviously wrong offers; report a failure as a platform
+    setting rather than retrying.
+  - ⚠️ \`isTrial\` is a property of the **cluster** — "accepts trial workloads" — not of the
+    caller's billing.
+- **Workload type** — \`WebService\` (HTTP, gets a URL), \`Worker\` (no ingress), \`CronJob\`
+  (needs \`schedule\`), \`InternalTCPService\` (cluster-internal).
+- **Data dependencies** — reuse an existing database (most common, listed in 3.2) · create a
+  new Postgres/Redis/Mongo · one hosted elsewhere, needing only env vars · a disk, new or
+  existing · nothing at all.
+- **Configuration** — env group, inline env, or mounted files; and which values are secret.
+- **Exposure**, \`WebService\` only — the free URL it already has, or a custom domain too.
+- **Continuous deployment** — whether to wire GitHub Actions, and the repo, branch, registry
+  and Dockerfile path.
+- **Scaling and size** — \`minReplica\` / \`maxReplica\`, cpu and memory from that cluster's
+  lists. Recommend and say why; never silently default.
 
 ---
 
@@ -699,44 +614,35 @@ Creating a new one:
 
 ### 6.2 Configuration
 
-⚠️ **Env groups are plain text and are never masked.** The API says so itself: *"do not put
-real secrets in an env group."* \`envgroupGet\` returns every value in full to anyone who can
-read the project. Secrets go in \`mountData\` with their paths listed in
-\`mountDataSecretPaths\`, which is the only thing here that censors — \`deploymentGet\` returns
-those as \`***\`. Inline \`env\` on the deployment is not masked either. So:
+\`\`\`
+  ordinary, shared across services  ─▶ env group
+  ordinary, one service only        ─▶ inline env on the deployment
+  SECRETS — passwords, keys, tokens ─▶ mountData + mountDataSecretPaths
+\`\`\`
 
-| | where it goes |
-|---|---|
-| ordinary shared config | env group |
-| ordinary per-service config | inline \`env\` on the deployment |
-| **secrets** — passwords, API keys, tokens | \`mountData\` + \`mountDataSecretPaths\` |
+⚠️ **Only \`mountDataSecretPaths\` masks anything.** Env groups and inline \`env\` are stored
+and returned in full to anyone who can read the project — the API says so itself: *"do not
+put real secrets in an env group."* Secret-marked mount paths come back as \`***\`.
+If the user wants a secret in an env group anyway, that is their call: say once that it is
+readable in full, then move on.
 
-If the user would rather keep a secret in an env group anyway, that is their call — say
-once that it will be readable in full, and move on.
-
-- \`envgroupCreate\` with a \`data\` object, then reference it by name in the deployment's
-  \`envGroups\`. \`name\` is lowercase, 3–27 characters, and **immutable** — there is no
-  rename, so pick it deliberately.
-- ⚠️ **\`envgroupUpdate\` REPLACES the whole map.** It is not a merge: any key you leave out
-  is deleted, and omitting \`data\` entirely empties the group. To change one value, read the
-  group with \`envgroupGet\` first, apply your change to that map, and send the whole thing
-  back. This is the same trap as \`env\` on a deployment, one level up.
-- Groups merge **in the order given**, later overriding earlier, and the deployment's own
-  \`env\` / \`addEnv\` / \`removeEnv\` is overlaid last and always wins.
-- ⚠️ On a deployment, \`envGroups\` absent means **leave the current links alone**; \`[]\` means
-  **unlink every group**. Those are different, and sending an empty array to mean "no change"
-  silently strips the deployment's whole shared configuration. An unknown name fails with
-  \`DEPLOYMENT_ENV_GROUP_NOT_FOUND\`.
-- \`mountDataChanges\` is applied on top of \`mountData\`, so the two compose — secret paths
-  listed in \`mountDataSecretPaths\` still apply to keys set either way.
-- ⚠️ The merge is **baked into the revision at deploy time.** Editing a group afterwards does
-  **not** change a running deployment — it needs another \`deploymentDeploy\` to pick the new
-  values up. This is the single most common surprise here: the group looks updated, the app
-  keeps running the old values. Say it out loud, and follow an \`envgroupUpdate\` with a
-  redeploy unless the user explicitly wants to wait.
-- Files rather than env vars: use \`mountDataChanges\`, a list of \`{key, type: "set"|"remove",
-  value}\` where \`key\` is the file path. (\`mountData\` still works but is the older form.)
-  List any secret paths in \`mountDataSecretPaths\` so \`deploymentGet\` censors them to \`***\`.
+- \`envgroupCreate\` with a \`data\` object, then name it in the deployment's \`envGroups\`.
+  \`name\` is lowercase, 3–27 chars, **immutable** — no rename, so pick deliberately.
+- ⚠️ **\`envgroupUpdate\` REPLACES the whole map.** Any key left out is deleted; omitting
+  \`data\` entirely empties the group. Read with \`envgroupGet\`, change, send it all back.
+- Groups merge **in the order given**, later overriding earlier; the deployment's own \`env\`
+  / \`addEnv\` / \`removeEnv\` overlays last and always wins.
+- ⚠️ \`envGroups\` absent means **leave links alone**; \`[]\` means **unlink every group**.
+  Sending \`[]\` to mean "no change" strips the deployment's whole shared configuration.
+  An unknown name fails \`DEPLOYMENT_ENV_GROUP_NOT_FOUND\`.
+- \`mountDataChanges\` applies on top of \`mountData\`; \`mountDataSecretPaths\` covers keys set
+  either way.
+- ⚠️ The merge is **baked into the revision at deploy time.** Editing a group does **not**
+  change a running deployment until it is redeployed — the group looks updated while the app
+  keeps the old values. Say so, and follow an \`envgroupUpdate\` with a redeploy unless the
+  user wants to wait.
+- Files rather than env vars: \`mountDataChanges\`, a list of
+  \`{key, type: "set"|"remove", value}\` where \`key\` is the file path.
 - **Private registry — the pull secret is theirs to create, not yours.**
 
   \`\`\`
@@ -772,28 +678,20 @@ once that it will be readable in full, and move on.
   pullSecret: <name>  on deploymentCreate
   \`\`\`
 
-  ⚠️ **Where this sits in the deployment flow:** the pull secret has to be in place before
-  CI pushes (rule 5, step 4), not before \`deploymentCreate\`. The create fails either way,
-  so a missing pull secret is invisible until the wait at step 5 never ends.
+  The diagram is the procedure. Four things it cannot carry:
 
-  Three steps, in order:
-  1. **Whose image is it?** That decides it, and the answer is not "whichever is easier".
-     - **Somebody else's** — \`nginx\`, \`python\`, an official base image, an already-public
-       package — needs no pull secret. Naming a \`pullSecret\` that does not exist fails the
-       deploy, so do not add one here.
-     - **The user's own application image** — assume **private**. That is the default for a
-       GHCR package and for Artifact Registry, and it is the correct default. It needs a
-       pull secret.
-     ⚠️ Never resolve this by making the user's image public. See rule 6.
-  2. **Does one already exist?** \`pullsecretList\` for that project and location. Names are
-     unique per (project, location), so a secret in another location does not help. If one
-     is there, reuse it by name — do not ask for credentials to make a second.
-  3. **Otherwise hand it over — but ask which registry first.** The fields differ per
-     registry, and a handoff that lists all of them makes the user do the choosing, which is
-     the part they came to you to avoid. Give **one** registry's exact values, then **wait**.
+  - ⚠️ **The user's own application image is private by default.** That is how GHCR packages
+    and Artifact Registry ship, and it is the right default — "whichever is easier" is not
+    the deciding question. Never resolve a missing pull secret by publishing it (rule 6).
+  - **Naming a \`pullSecret\` that does not exist fails the deploy**, so do not attach one to
+    a public image.
+  - **Ask which registry before handing over.** The fields differ, and a handoff listing all
+    of them makes the user do the choosing — the part they came to you to avoid.
+  - ⚠️ **The pull secret has to exist before CI pushes, not before \`deploymentCreate\`.** The
+    create fails either way, so a missing one is invisible until the final wait never ends.
 
-  Two things they have to do, in this order — the credential does not exist yet, and the
-  console form will ask for it. This is the GHCR shape; use the reserve below for others.
+  The handoff, GHCR shape — two steps, because the credential does not exist yet and the
+  console form will ask for it. Other registries are in the reserve below.
 
   > Your image is in a private registry, so Nortezh needs credentials to pull it. You create
   > these yourself — I cannot, because it would mean putting your registry password in this
@@ -821,24 +719,27 @@ once that it will be readable in full, and move on.
 
   **Keep in reserve** — the other registries, and what to say when the pull still fails:
 
-  - **Google Artifact Registry.** Server URL is the *regional host* —
-    \`asia-southeast1-docker.pkg.dev\` — not the full repository path. Username is the literal
-    string \`_json_key\`. Password is the **entire** service-account JSON key, pasted whole,
-    braces and all. The account needs **Artifact Registry Reader** on that repository;
-    Writer is what CI pushes with and is not needed to pull.
-  - **Docker Hub.** Server URL \`https://index.docker.io/v1/\`. Username is the account name.
-    Password should be an **access token** (Account Settings → Security → New Access Token),
-    not the account password.
-  - **GHCR: token is right but the pull still fails.** \`read:packages\` authorises the token;
-    it does not grant that account access to the package. Check GitHub → the package →
-    Package settings → Manage access. A package published by a workflow in one repository
-    does not automatically grant anything to a different repository or user.
-  - **Use a classic PAT for GHCR.** Fine-grained token support for packages is limited and
-    inconsistent; classic tokens with \`read:packages\` are the reliable choice.
-  - **Wrong location is the silent one.** Names are unique per (project, location), so a
-    secret created in a different location does not apply — and the pull fails exactly as if
-    no secret existed, which sends people looking at the token instead.
-  - ⚠️ **Never offer to make the image public** to get past any of the above. See rule 6.
+  \`\`\`
+  Artifact Registry   server  asia-southeast1-docker.pkg.dev  ← regional host,
+                              not the repository path
+                      user    _json_key   (literal)
+                      pass    the ENTIRE service-account JSON, braces and all
+                      role    Artifact Registry Reader (Writer is for CI's push)
+
+  Docker Hub          server  https://index.docker.io/v1/
+                      user    the account name
+                      pass    an access token, not the account password
+                              (Account Settings → Security → New Access Token)
+  \`\`\`
+
+  - **GHCR: token is right, pull still fails.** \`read:packages\` authorises the *token*; it
+    does not grant that account access to the *package*. GitHub → the package → Package
+    settings → Manage access. A package published by a workflow in one repo grants nothing
+    to another repo or user.
+  - **Classic PAT for GHCR**, not fine-grained — package support there is inconsistent.
+  - ⚠️ **Wrong location is the silent one.** A secret in a different location does not apply,
+    and the pull fails exactly as if none existed — sending people to inspect the token.
+  - ⚠️ **Never offer to make the image public** to get past any of this. See rule 6.
 
 ### 6.3 The deployment
 
@@ -876,35 +777,53 @@ rollback.
 
 #### Creating a new one, when the image does not exist yet
 
-**This is the normal path, not a fallback.** Rule 5 has the route and the diagram; this is
-what it means for the call you are about to make.
+**This is the normal path, not a fallback.**
 
-\`deploymentCreate\` carries the **whole** configuration — \`type\`, \`port\`, \`schedule\`, env,
-env groups, resources, replicas, disk — and \`image\` set to \`<registry>/<path>:latest\`, the
-image CI will push. Nothing about it is temporary except the tag.
+\`\`\`
+  you                        user                  github actions
+  ───                        ────                  ──────────────
 
-⚠️ **It will fail, and you should say so before it does.** The registry has nothing at that
-tag yet, so the pull fails and \`actionStatus\` becomes \`"failed"\`. Tell the user that is the
-expected first state and that CI clears it. Then leave it alone: do not retry, do not read
-\`logUrl\` looking for a cause, do not swap in \`nginx\` to get a green status. A failed
-deployment here is the flow working.
+  deploymentCreate
+    image  <registry>/<path>:latest   ← not pushed yet
+    type, port, env, resources        ← the real config, all of it
+        │
+        ▼
+    actionStatus "failed"   ⚠️ EXPECTED — nothing to pull.
+        │                      do not debug it, retry it, or swap
+        │                      the image to make it go green
+        ▼
+  write .github/workflows/deploy-<name>.yaml
+        │
+        └───────────▶ commit and push
+                            │
+                            └──────────▶ build image
+                                         push <registry>/<path>:<sha>
+                                         deployment.create-revision
+                                                   │
+        ┌──────────────────────────────────────────┘
+        ▼
+  poll deploymentGet until actionStatus "success"
+        ⚠️ the only wait that means anything
+\`\`\`
 
-⚠️ **\`type\` is immutable**, so it has to be right at creation — that is the one field a
-later CI deploy cannot fix. A \`WebService\` that should have been a \`Worker\` means delete and
-recreate.
+\`deploymentCreate\` carries the **full real config** — \`type\`, \`port\`, \`schedule\`, env, env
+groups, resources, replicas, disk. Nothing is temporary except the tag.
 
-Then:
+- ⚠️ **Say it will fail before it does.** A failed deployment here is the flow working. Do
+  not retry, do not read \`logUrl\` for a cause, do not swap in \`nginx\` for a green status.
+- ⚠️ **\`type\` is immutable** — the one field a later CI deploy cannot fix.
+- ⚠️ **The pull secret must exist before CI pushes, not before this create.** The create
+  fails either way, so a missing one hides inside the expected failure and surfaces as a
+  wait that never ends. Confirm with \`pullsecretList\` before the user pushes.
+- **That workflow builds the image, pushes it, and sets the real tag on the deployment.**
+  You never call \`deploymentDeploy\` for the image — only for what the workflow does not set.
 
-1. Wire CI (6.5) and have the user commit and push.
-2. **The workflow sets the image.** You never call \`deploymentDeploy\` for it. Use
-   \`deploymentDeploy\` only for what the workflow does not set — env groups, disk mount,
-   replicas, resources — and only if they were not already right at create.
-3. Poll \`deploymentGet\` until \`actionStatus\` is \`"success"\`, then report.
+Pointing at the real registry from the start is what makes this work: nothing needs
+correcting afterwards, and \`type\` is right at creation.
 
-If a real image **already exists in a registry** — a public image, or one an earlier CI run
-pushed — use that exact tag instead and there is no failing first state at all. ⚠️ "Already
-exists" means already pushed. A Dockerfile in the repo is not an image, and building it is
-rule 5.
+If a real image **already exists in a registry** — public, or pushed by an earlier CI run —
+use that exact tag and there is no failing first state. ⚠️ "Already exists" means already
+pushed; a Dockerfile in the repo is not an image.
 
 Field rules worth knowing before you send anything:
 
@@ -953,70 +872,56 @@ On \`"failed"\`, read \`logUrl\` and \`statusUrl\` from \`deploymentGet\` and re
 back as proof the service is reachable. This section is only for a **custom** domain on top
 of that URL.
 
-**1. \`domainCreate\`.** Ask about \`cdn\` first — it defaults to \`false\` and it is not a
-detail you can change your mind about cheaply:
+\`\`\`
+  domainCreate  ─▶  domainGet  ─▶  ❗ user adds CNAME  ─▶  routeCreate
+   ask cdn first     read the        then STOP             target is a URI
+   (default false)   cname value     and wait
+\`\`\`
 
-- \`cdn: false\` (**the default**) — the domain points straight at the cluster. Nothing extra
-  is required, and deleting it later is immediate.
-- \`cdn: true\` — served through the Nortezh CDN. **Feature-gated**: the project's billing
-  account must have the \`cdn\` feature enabled, and a **trial billing account is rejected
+**1. \`domainCreate\`.** Ask about \`cdn\` first — it is not cheap to change your mind about.
+
+- \`cdn: false\` (**the default**, recommend it) — points straight at the cluster, nothing
+  extra required, deletion is immediate.
+- \`cdn: true\` — **feature-gated** on the billing account, and a **trial account is rejected
   outright** (\`DOMAIN_TRIAL_BILLING_CANNOT_CREATE_CDN_DOMAIN\`, or \`ACCESS_DENIED\` when the
-  feature is simply off). Deleting a CDN domain is asynchronous rather than immediate.
+  feature is off). Deletion is asynchronous.
 
-Offer both plus the free-text escape, and recommend \`false\` unless the user says they want
-the CDN — it is the default for a reason and it works everywhere.
-
-**2. \`domainGet\`, then hand the record to the user.**
-
-Two consequences of what the model says about domains, because both change what you send
-the user:
-
-- A non-CDN domain has **no verification at all**, so do not present its empty
-  \`verification.ownership\` / \`verification.ssl\` fields as records to publish. They are
-  zero-valued because that path has none, not because it has not run yet.
-- \`dnsConfig\` carries **one CNAME**, so the handoff is one record — not a table of three.
-  Read the value from \`domainGet\`; it differs by \`cdn\` flag.
-
-So the handoff is:
+**2. \`domainGet\`, then hand the record over.** ⚠️ \`dnsConfig\` carries **one CNAME**, and its
+value differs by \`cdn\` — read it, never write one from memory. A non-CDN domain has **no
+verification at all**, so its empty \`verification\` fields are not records to publish.
 
 > Point your domain at Nortezh with this DNS record:
 >
-> | type | name | value |
-> |---|---|---|
-> | CNAME | \`<their domain>\` | \`<dnsConfig.cname[0]>\` |
+> \`\`\`
+>   CNAME   <their domain>   <dnsConfig.cname[0]>
+> \`\`\`
 >
 > On Cloudflare, set it to **DNS only** (grey cloud), not Proxied.
 >
 > Tell me when it is live.
 
-Then stop and wait. Do not explain TLS termination, apex flattening or SSL modes unless
-something goes wrong.
+Then stop and wait. Do not explain TLS termination or SSL modes unless something goes wrong.
 
 **Keep in reserve, for when they report a problem:**
-- Proxied (orange cloud) breaks certificate issuance and commonly causes redirect loops,
-  because Cloudflare terminates TLS itself while Nortezh also redirects HTTP to HTTPS. Grey
-  cloud first, always. If they want the proxy afterwards it is a deliberate second step, and
-  the SSL mode must be **Full (strict)**, never Flexible.
-- At the zone apex Cloudflare flattens a CNAME automatically, which is what makes a root
-  domain work at all here — there are no A/AAAA records to fall back to. Expected; not a
-  problem to route around.
-- The proxy caches. If they enable it later and a deploy seems not to take effect, purge
-  first.
-- Other providers need the same CNAME; only the UI differs. A provider that cannot CNAME at
-  the apex is a real constraint — ask, rather than guessing at a workaround.
+- Proxied (orange cloud) breaks certificate issuance and causes redirect loops — Cloudflare
+  terminates TLS while Nortezh also redirects to HTTPS. Grey cloud first, always. If they
+  want the proxy later, SSL mode must be **Full (strict)**, never Flexible.
+- Cloudflare flattens a CNAME at the apex automatically, which is what makes a root domain
+  work here at all. Expected, not a problem to route around.
+- The proxy caches: if enabled later and a deploy seems not to land, purge first.
+- Other providers need the same CNAME; only the UI differs. One that cannot CNAME at the
+  apex is a real constraint — ask rather than guess a workaround.
 
 **3. \`routeCreate\`** maps \`domain\` + \`path\` onto a deployment.
 
-- ⚠️ **\`target\` is a URI, not a name.** It must be \`deployment://<name>\` — that prefix is
-  the only accepted form, and a bare \`"api"\` fails validation with "target is invalid".
+- ⚠️ **\`target\` is a URI, not a name** — \`deployment://<name>\`. A bare \`"api"\` fails with
+  "target is invalid".
 - \`path\` must start with \`/\`. Use \`/\` for the whole site.
-- ⚠️ Never set \`skipDomainVerify\`. It exists for tests, and using it claims routing for a
-  domain nobody verified.
+- ⚠️ Never set \`skipDomainVerify\`; it claims routing for a domain nobody verified.
 
-**4. Confirm it works.** For a non-CDN domain there is nothing to poll — once the CNAME
-resolves, the route serves. If it does not, the usual causes in order: the record went into
-the wrong zone, Cloudflare's proxy is on, or DNS has not propagated yet. Only a **CDN**
-domain has a \`status\` worth re-checking with \`domainGet\`.
+**4. Confirm.** A non-CDN domain has nothing to poll — once the CNAME resolves, the route
+serves. If it does not: wrong zone, Cloudflare proxy on, or DNS not propagated, in that
+order. Only a **CDN** domain has a \`status\` worth re-checking.
 
 ### 6.5 Continuous deployment
 
@@ -1027,12 +932,22 @@ Actions workflow: build and push the image, then deploy it with the official
 
 #### First, the setup — all of it is theirs to do
 
-**None of it is callable from here.** Service-account tools are deliberately not exposed, so
-you cannot check whether one exists, create one, or read a key. Ask which registry they use
-first, since it changes what they need, then hand them the list.
+\`\`\`
+  ❗ Nortezh service account ──▶ NORTEZH_SA_EMAIL / NORTEZH_SA_KEY ─┐
+  ❗ registry push credential ─▶ GOOGLE_CREDENTIALS (or equivalent) ─┼─▶ GitHub Secrets
+  ❗ pull secret (6.2)        ──▶ name only, to you ─────────────────┘        │
+                                                                             ▼
+                                              you write the workflow  ◀── they confirm
+\`\`\`
 
-Do not write the workflow file until they confirm it is done — a workflow whose secrets do
-not exist fails on its first run and wastes a build.
+**None of it is callable from here** — service-account tools are not exposed, so you cannot
+check whether one exists or read a key. Ask which registry first, since it changes what they
+need. Do not write the workflow until they confirm: a workflow whose secrets do not exist
+fails on its first run and wastes a build.
+
+⚠️ **Push and pull are different credentials.** Push is Actions' and needs **write**; pull is
+the cluster's and needs only **read**. Never reuse one for both — a leaked pull secret should
+not be able to overwrite images.
 
 The handoff, roughly this short:
 
@@ -1062,59 +977,42 @@ The handoff, roughly this short:
 > Tell me when that is done and I will write the workflow.
 
 ⚠️ **The push credential goes from the user straight into GitHub Secrets, never through
-you.** Do not ask them to paste a JSON key, a PAT or a registry password here "so I can put
-it in the workflow" — a value in this transcript is a value that has to be rotated. You need
-the secret **names**, which you already know because you chose them.
+you** — a value in this transcript is a value that has to be rotated. You need only the
+secret **names**, which you already know because you chose them.
 
-**Steps 2 and 3 are different credentials with different scopes**, and conflating them is
-common: step 2 is **push**, used by GitHub Actions, and needs **write**. Step 3 is **pull**,
-used by the cluster, and needs only **read**. Never reuse one key for both — a leaked pull
-secret should not be able to overwrite images.
+Drop step 3 only when the image genuinely belongs to someone else and is already public.
+Do **not** drop it by arranging for the user's own image to be public.
 
-Drop step 3 only when the image genuinely belongs to someone else and is already public —
-listing an irrelevant step makes the other three look optional too. Do **not** drop it by
-arranging for the user's own image to be public.
-
-Also ask, if you do not already know them: the **Dockerfile path** and the **branch** that
-should trigger a deploy.
+Also ask, if you do not know them: the **Dockerfile path** and the **branch** that triggers
+a deploy.
 
 **How the build job logs in is a choice, not a property of the registry.** Every option ends
-at the same \`docker/login-action\`; only what it is handed differs. Ask, with choices and the
-free-text escape, like any other decision:
+at the same \`docker/login-action\`; only what it is handed differs. Ask, with choices:
 
-- **OAuth2 — a short-lived token minted during the run.** A provider step exchanges a
-  long-lived credential for an access token, and the login uses a fixed username with that
-  token as the password. Artifact Registry does this with
-  \`google-github-actions/auth\` + \`oauth2accesstoken\`, which is what the template below
-  uses. **Recommend this where it exists:** the value in the registry login expires in an
-  hour, so a leaked build log ages out.
-- **Username and password (or token).** A static secret handed straight to
-  \`docker/login-action\`. Simpler, works everywhere, and the credential is long-lived — so
-  it matters more where it is stored and how it is rotated.
+- **OAuth2 — a short-lived token minted during the run.** A provider step trades a
+  long-lived credential for an access token used as the password. **Recommend it where it
+  exists:** the value in the login expires in an hour, so a leaked build log ages out.
+- **Username and password (or token).** A static secret handed to \`docker/login-action\`.
+  Simpler, works everywhere, long-lived — so where it is stored and rotated matters more.
 
-⚠️ **Several registries support both, so do not decide from the registry name.** Artifact
-Registry takes \`_json_key\` plus the JSON key as an ordinary username/password pair; GHCR
-takes the injected \`GITHUB_TOKEN\` *or* a PAT. Ask which they want.
+⚠️ **Several registries support both, so do not decide from the registry name.** Ask.
 
-What each option needs, once they have chosen:
+\`\`\`
+  GHCR          user/pass   nothing to create — Actions injects GITHUB_TOKEN.
+                            Needs permissions: packages: write and
+                            username: github.actor. A PAT only when the push
+                            crosses into another org or repo.
+  Artifact Reg  OAuth2      GOOGLE_CREDENTIALS, as the template uses it.
+                            (Workload Identity Federation if they already have
+                            it — keyless — but do not set it up mid-deploy.)
+  Artifact Reg  user/pass   _json_key + the whole JSON key. No provider step,
+                            shorter workflow, long-lived key in GitHub Secrets.
+  Docker Hub    user/pass   DOCKERHUB_USERNAME + DOCKERHUB_TOKEN, Read & Write.
+                            Not the account password.
+\`\`\`
 
-- **GHCR, username/password.** ⚠️ Usually **nothing to create**: Actions injects
-  \`\${{ secrets.GITHUB_TOKEN }}\`, so the job needs only \`permissions: packages: write\` and
-  \`username: \${{ github.actor }}\`. Say so rather than asking for a PAT they do not need —
-  though a PAT is the right answer when the push crosses into another org or repository,
-  which \`GITHUB_TOKEN\` cannot do.
-- **Artifact Registry, OAuth2.** The JSON key as \`GOOGLE_CREDENTIALS\`, exactly as the
-  template uses it. Mention Workload Identity Federation if they already have it — keyless,
-  nothing to rotate — but do not push them into setting it up mid-deploy.
-- **Artifact Registry, username/password.** Username is the literal \`_json_key\`, password
-  is the whole JSON key. No provider step, so it is the shorter workflow; the trade is a
-  long-lived key in GitHub Secrets.
-- **Docker Hub, username/password.** \`DOCKERHUB_USERNAME\` and \`DOCKERHUB_TOKEN\`, the token
-  from Account Settings → Security → New Access Token with **Read & Write**. Not the account
-  password.
-
-Whichever they pick, the **pull** secret in step 3 is still required for a private image:
-the cluster is not GitHub Actions and does not see any of this.
+Whichever they pick, the **pull** secret is still required for a private image: the cluster
+is not GitHub Actions and sees none of this.
 
 **Keep in reserve, for when they ask or hit a problem:**
 - It has to be a service account, not their own login: user bearer tokens expire after 7
@@ -1363,27 +1261,23 @@ not reach a running deployment until it is redeployed.
 
 # Ground rules
 
-- **Never invent an identifier.** Project slugs, locations, cpu/memory sizes, disk names,
-  env group names, image tags — all of them come from a list call or from the user.
-- **Reuse beats create.** Check the inventory before creating anything. A name collision
-  (\`DEPLOYMENT_NAME_ALREADY_EXISTS\`, \`DISK_NAME_NOT_AVAILABLE\`, \`DATABASE_NAME_NOT_AVAILABLE\`)
-  usually means the thing you wanted already exists, not that you need a different name —
-  ask before renaming around it.
-- **Change the least you can — but never less than the call requires.** \`deploymentDeploy\`
-  patches, so leave alone what you are not changing. ⚠️ "The fields that differ and nothing
-  else" is **not** a safe rule here: \`project\`, \`location\`, \`name\` and \`image\` are demanded
-  on every call, and omitting \`mountDataSecretPaths\` deletes rather than preserves. See 6.3.
-- **Confirm before anything destructive.** Every delete — \`deploymentDelete\` (which silently
-  takes its routes with it), \`diskDelete\`, \`domainDelete\`, \`routeDelete\`, \`envgroupDelete\`,
-  \`pullsecretDelete\`, \`db*Delete\` — plus \`deploymentRollback\`, and \`deploymentPause\`, which
-  stops a running workload. Say exactly what will be destroyed or stopped, then wait.
-- **Re-running must be safe.** Check for an existing resource before creating one. The user
-  may be resuming a half-built stack.
-- **A tool error is real.** This API answers domain errors with HTTP 200 and \`ok:false\`; the
-  MCP layer already converts those into tool errors. Do not retry an identical call hoping
-  for a different answer — read the code and fix the input or ask.
-- **Never echo secrets in a summary.** Database passwords, basic-auth passwords, service
-  account keys: say where you put them, not what they are.`
+- **Never invent an identifier.** Slugs, locations, cpu/memory sizes, disk and env group
+  names, image tags — all come from a list call or from the user.
+- **Reuse beats create.** A name collision (\`DEPLOYMENT_NAME_ALREADY_EXISTS\`,
+  \`DISK_NAME_NOT_AVAILABLE\`, \`DATABASE_NAME_NOT_AVAILABLE\`) usually means the thing already
+  exists, not that you need a different name. Ask before renaming around it.
+- **Re-running must be safe.** The user may be resuming a half-built stack.
+- **Change the least you can — but never less than the call requires.** ⚠️ "The fields that
+  differ and nothing else" is **not** safe here: \`project\`, \`location\`, \`name\` and \`image\`
+  are demanded every call, and omitting \`mountDataSecretPaths\` deletes. See 6.3.
+- **Confirm before anything destructive.** Every delete — \`deploymentDelete\` (silently takes
+  its routes), \`diskDelete\`, \`domainDelete\`, \`routeDelete\`, \`envgroupDelete\`,
+  \`pullsecretDelete\`, \`db*Delete\` — plus \`deploymentRollback\` and \`deploymentPause\`, which
+  stops a running workload. Say what will be destroyed or stopped, then wait.
+- **A tool error is real.** Domain errors arrive as HTTP 200 with \`ok:false\` and the MCP
+  layer converts them into tool errors. Do not retry an identical call — read the code, fix
+  the input, or ask.
+- **Never echo secrets in a summary.** Say where you put them, not what they are.`
 
 const RESOURCE_MODEL = `Reference: what each Nortezh resource is, what it depends on, how you know it is ready,
 and what can still be changed after it exists.
