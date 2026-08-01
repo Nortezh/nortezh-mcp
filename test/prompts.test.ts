@@ -764,8 +764,16 @@ test('the image route is stated as a procedure, not as a prohibition', () => {
   assert.match(flat, /the \*\*full real config\*\*/)
   assert.match(flat, /That workflow builds the image, pushes it, and sets the real tag on the deployment/)
   assert.match(flat, /"Already exists" means already pushed/)
-  // The prohibition survives, but as a consequence of the route rather than a rule of its own.
-  assert.match(flat, /which follows from it rather than being a separate restriction/)
+  // Observed for real on build 13: the model built linux/amd64 locally and pushed to GHCR
+  // with the laptop's docker credential. The rule's justification had been "an image on
+  // your machine cannot be deployed", which is simply false — push it and the cluster pulls
+  // it. A reason the model can disprove invites the workaround it is meant to stop.
+  assert.match(flat, /Not \*"it would not work"\* — it would/)
+  assert.match(flat, /unreviewed and unreproducible/)
+  assert.match(flat, /needs a \*\*write\*\* credential that rule 6 keeps out of this session/)
+  // And the pressure that produced it: no workflow yet, user wants it deployed now.
+  assert.match(flat, /"There is no CI yet" is not an exception — it is the normal starting state/)
+  assert.match(flat, /the lever is getting the workflow pushed, not bypassing it/)
   // This path has to read as the default, not as a workaround.
   assert.match(flat, /\*\*This is the normal path, not a fallback\.\*\*/)
 })

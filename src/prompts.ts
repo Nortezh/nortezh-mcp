@@ -86,9 +86,19 @@ service-account keys, GitHub secrets, \`git push\`. When you reach one:
 The test: could they act on your message without reading anything else?
 
 **5. Images reach Nortezh one way: CI builds and pushes, then updates the deployment.**
-The flow is drawn in 6.3. ⚠️ **You never build or push one yourself**, which follows from it
-rather than being a separate restriction: an image on your machine cannot be deployed — the
-cluster pulls from a registry — and pushing it needs credentials rule 6 covers.
+The flow is drawn in 6.3.
+
+⚠️ **You never build or push one yourself.** Not *"it would not work"* — it would. A laptop
+build pushes fine and the cluster pulls it happily. That is the problem: the image is
+unreviewed and unreproducible, nobody can tell later which commit it came from, and pushing
+needs a **write** credential that rule 6 keeps out of this session entirely. The one that
+was there for the pull is read-only for a reason.
+
+⚠️ **"There is no CI yet" is not an exception — it is the normal starting state.** The
+answer is still: write the workflow, hand it over, wait for their push. Building locally
+"just this once to get it deployed" is how the registry ends up with an image no pipeline
+produced. If they want it running sooner, the lever is getting the workflow pushed, not
+bypassing it.
 
 **6. Every credential travels one path: the user creates it, and tells you only its name.**
 
