@@ -51,6 +51,36 @@ test('the rendered forms are the ones a human reads in /mcp', () => {
   )
 })
 
+test('serverInfo is callable and reports the build', async () => {
+  // The gap the stamp alone left: serverInfo.version goes to the CLIENT, and the model never
+  // sees it. It sees tool names, descriptions and schemas — so without a tool, "am I talking
+  // to the current build?" was only answerable when a tool had just been added or removed.
+  const { LOCAL_TOOLS } = await import('../src/local-tools.js')
+  const tool = LOCAL_TOOLS.find((candidate) => candidate.name === 'serverInfo')
+  assert.ok(tool !== undefined, 'serverInfo is not registered')
+  assert.equal(tool.readOnly, true)
+  assert.deepEqual(tool.inputSchema, { type: 'object', properties: {} })
+
+  const result = tool.run() as Record<string, unknown>
+  assert.equal(typeof result.version, 'string')
+  assert.equal(typeof result.build, 'number')
+  assert.ok(Array.isArray(result.prompts))
+  // Counts have to include this tool, or the number disagrees with tools/list.
+  const { TOOLS } = await import('../src/generated/tools.js')
+  assert.equal(result.apiRoutes, TOOLS.length)
+  assert.equal(result.tools, TOOLS.length + LOCAL_TOOLS.length)
+})
+
+test('a local tool name cannot collide with a generated one', async () => {
+  // index.ts checks local tools first, so a collision would silently shadow an API route.
+  const { LOCAL_TOOLS } = await import('../src/local-tools.js')
+  const { TOOLS } = await import('../src/generated/tools.js')
+  const generated = new Set(TOOLS.map((tool) => tool.name))
+  for (const tool of LOCAL_TOOLS) {
+    assert.equal(generated.has(tool.name), false, `${tool.name} shadows a generated tool`)
+  }
+})
+
 test('the declared VERSION matches package.json', async () => {
   // Two places state the version; the stamp copies package.json and this constant is the
   // fallback when there is no stamp. If they drift, running from source reports a different

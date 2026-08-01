@@ -30,6 +30,12 @@ parses the string still reads `0.1.0`.
 node dist/index.js version    # full stamp, build time, tool and prompt counts
 ```
 
+The model cannot see `serverInfo.version` — it sees tool names, descriptions and schemas and
+nothing else. So the same stamp is also exposed as a **`serverInfo` tool**, which is how you
+ask *in chat* whether the connected server is current. It is the only tool in
+`src/local-tools.ts`: answered in-process, no API call, and checked before the generated
+tools so it still works when the token has expired.
+
 An MCP client caches the tool list at connect time, so **every rebuild needs a reconnect** —
 and the reconnect has to happen after the build finishes, or it picks up a half-written
 `dist`. Comparing the build number is how you tell.

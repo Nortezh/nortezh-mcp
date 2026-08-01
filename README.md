@@ -115,6 +115,7 @@ prompt, so a cross-reference would be advice the model could not act on.)
 ## Tools
 
 55 of the API's 98 routes — 30 read-only, 11 destructive, 14 plain writes.
+Plus `serverInfo`, which reports this server's own build rather than calling the API.
 
 | group | tools |
 |---|---|

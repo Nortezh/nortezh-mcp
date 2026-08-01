@@ -22,6 +22,7 @@ import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { PROMPTS } from './prompts.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
+import { LOCAL_TOOLS } from './local-tools.js'
 import { readBuildInfo, versionString, VERSION } from './version.js'
 
 async function runServer(): Promise<void> {
@@ -126,20 +127,41 @@ async function runServer(): Promise<void> {
   })
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOLS.map((tool) => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: tool.inputSchema as { type: 'object' },
-      annotations: {
-        readOnlyHint: tool.readOnly,
-        destructiveHint: tool.destructive,
-        // Every tool reaches a remote API, so none of them is closed-world.
-        openWorldHint: true,
-      },
-    })),
+    tools: [
+      ...TOOLS.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as { type: 'object' },
+        annotations: {
+          readOnlyHint: tool.readOnly,
+          destructiveHint: tool.destructive,
+          // Every generated tool reaches the remote API, so none is closed-world.
+          openWorldHint: true,
+        },
+      })),
+      ...LOCAL_TOOLS.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema as { type: 'object' },
+        annotations: {
+          readOnlyHint: tool.readOnly,
+          destructiveHint: false,
+          // Answered from this process — no network, nothing outside it to observe.
+          openWorldHint: false,
+        },
+      })),
+    ],
   }))
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    // Local tools are checked first: they answer in-process, so none of the auth, retry or
+    // envelope handling below applies to them. serverInfo in particular has to work when
+    // the token is expired — "which build is this?" is a question you ask while debugging.
+    const local = LOCAL_TOOLS.find((candidate) => candidate.name === request.params.name)
+    if (local !== undefined) {
+      return { content: [{ type: 'text' as const, text: JSON.stringify(local.run(), null, 2) }] }
+    }
+
     const tool = byName.get(request.params.name)
     if (tool === undefined) {
       return {
