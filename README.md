@@ -168,6 +168,17 @@ and log in again.
 **Nothing appears in `/mcp`.** Run `node dist/index.js` by hand — startup errors go to
 stderr, which the client may be hiding.
 
+**A change you made is not showing up.** The client caches the tool list at connect time, so
+a rebuild needs a reconnect. `/mcp` shows the version it is running:
+
+```
+0.1.0+build.12.a1b2c3d
+```
+
+The build number goes up on every `npm run build`. Compare it with `node dist/index.js
+version` — if the client's is lower, reconnect. Do it after the build finishes; reconnecting
+mid-build picks up a half-written `dist` and looks like nothing changed.
+
 ---
 
 Building on it, or adding tools: [DEVELOPMENT.md](./DEVELOPMENT.md).

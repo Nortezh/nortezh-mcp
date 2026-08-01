@@ -17,7 +17,7 @@
   "scripts": {
     "sync-spec": "tsx scripts/sync-spec.ts",
     "generate": "tsx scripts/generate.ts",
-    "build": "npm run generate && tsc",
+    "build": "npm run generate && tsc && tsx scripts/stamp.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "test": "tsx --test test/*.test.ts",
     "check": "tsx scripts/check-generated.ts && npm run typecheck && npm test"

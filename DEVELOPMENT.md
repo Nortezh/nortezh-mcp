@@ -12,6 +12,33 @@ compares. Regenerating first would mean the tests grade the generator's fresh ou
 against itself, so a stale or hand-edited artifact would always pass. It works with no git
 repository, which a `git diff` guard did not.
 
+## Is the client running my build?
+
+`npm run build` stamps `dist/build-info.json` with a counter that increases every time, plus
+the commit. It surfaces as `serverInfo.version`, so the server list shows:
+
+```
+0.1.0+build.12.a1b2c3d          build 12, clean tree
+0.1.0+build.12.a1b2c3d-dirty    built from uncommitted changes
+0.1.0+source                    running from src, never stamped
+```
+
+Everything after `+` is semver build metadata and ignored for precedence, so a client that
+parses the string still reads `0.1.0`.
+
+```bash
+node dist/index.js version    # full stamp, build time, tool and prompt counts
+```
+
+An MCP client caches the tool list at connect time, so **every rebuild needs a reconnect** —
+and the reconnect has to happen after the build finishes, or it picks up a half-written
+`dist`. Comparing the build number is how you tell.
+
+The counter lives in `.build-number` (gitignored) so `rm -rf dist` does not reset it. The
+stamp is written to `dist/`, never `src/`: it contains a timestamp and a counter that change
+every run, and `check-generated.ts` compares committed generated output against a fresh
+generation — a stamp in `src/` would fail that check permanently.
+
 ## Layout
 
 ```
@@ -19,6 +46,8 @@ scripts/allowlist.ts   which operations become tools — the only hand-maintaine
 scripts/generate.ts    spec + allowlist -> src/generated/tools.ts
 scripts/sync-spec.ts   vendor swagger.json from ../nortezh-backend
 scripts/check-generated.ts  fail if the committed tools.ts is not what the generator makes
+scripts/stamp.ts       write dist/build-info.json — the per-build counter and commit
+src/version.ts         read that stamp, or fall back when running from source
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
 src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)

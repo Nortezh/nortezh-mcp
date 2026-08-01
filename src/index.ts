@@ -22,8 +22,7 @@ import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { PROMPTS } from './prompts.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
-
-const VERSION = '0.1.0'
+import { readBuildInfo, versionString, VERSION } from './version.js'
 
 async function runServer(): Promise<void> {
   const { apiUrl, token, fromEnv } = resolveAuth()
@@ -90,8 +89,11 @@ async function runServer(): Promise<void> {
     return await reloginInFlight
   }
 
+  // The build stamp goes in serverInfo.version, which is what a client shows in its server
+  // list — so "am I running the build I just made" is answerable by reading a number rather
+  // than by hunting for a tool that was removed.
   const server = new Server(
-    { name: 'nortezh', version: VERSION },
+    { name: 'nortezh', version: versionString() },
     { capabilities: { tools: {}, prompts: {} } },
   )
 
@@ -192,7 +194,7 @@ async function runServer(): Promise<void> {
 
   await server.connect(new StdioServerTransport())
   // stdout is the MCP transport — anything written there corrupts the protocol.
-  console.error(`nortezh-mcp ${VERSION}: ${TOOLS.length} tools, API ${apiUrl}`)
+  console.error(`nortezh-mcp ${versionString()}: ${TOOLS.length} tools, API ${apiUrl}`)
 }
 
 async function main(): Promise<void> {
@@ -205,14 +207,21 @@ async function main(): Promise<void> {
   }
 
   if (command === 'version' || command === '--version') {
-    console.log(VERSION)
+    const info = readBuildInfo()
+    console.log(versionString(info))
+    if (info.build === 0) {
+      console.log('running from source — no build stamp. Run `npm run build` to stamp one.')
+    } else {
+      console.log(`build ${info.build}${info.commit === null ? '' : ` from ${info.commit}`}, built ${info.builtAt}`)
+    }
+    console.log(`${TOOLS.length} tools, ${PROMPTS.length} prompts`)
     return
   }
 
   if (command === 'help' || command === '--help') {
     console.log(
       [
-        `nortezh-mcp ${VERSION}`,
+        `nortezh-mcp ${versionString()}`,
         '',
         'Usage:',
         '  nortezh-mcp            run the MCP server over stdio (what an MCP client starts)',
