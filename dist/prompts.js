@@ -1570,6 +1570,43 @@ since user tokens last 7 days. It is a user row with an email of the form
 - **Deletes are quieter than you expect.** A deployment takes its routes with it, a project
   delete leaves most of its resources behind, deleting a missing domain succeeds, and
   \`DISK_IN_USE\` misses the common kind of disk mount.`;
+/**
+ * Fills the two placeholders in one pass.
+ *
+ * ONE pass over both tokens, not two chained replaces. Two passes let the first
+ * substitution's OUTPUT become the second's subject, so an argument value of literally
+ * "{{RESOURCE_MODEL}}" got expanded — splicing the whole reference into the user-said block
+ * and leaving the real placeholder unfilled.
+ *
+ * The replacer is a FUNCTION, not a replacement string: String.replace interprets `$&`,
+ * "$`", `$'` and `$n` in a replacement string, so a value containing one of those would
+ * splice pieces of the template back into the output.
+ */
+function fillDeployStack(givenBlock, resourceModel) {
+    return DEPLOY_STACK.replace(/\{\{(GIVEN|RESOURCE_MODEL)\}\}/g, (_match, token) => token === 'GIVEN' ? givenBlock : resourceModel);
+}
+/** The resource model on its own — what the `resources` prompt and `resources.md` carry. */
+export const RESOURCE_MODEL_TEXT = RESOURCE_MODEL;
+/**
+ * The procedure for the SKILL, where the resource model is a sibling file rather than
+ * inlined.
+ *
+ * The MCP prompt has to inline it — a prompt cannot reference another prompt, because the
+ * model has no `prompts/get`. A skill has no such limit: its files can point at each other
+ * and be read on demand, which is the whole reason the skill can load ~4k for an ordinary
+ * question and only reach ~19k when something is actually being deployed.
+ */
+export function renderDeployStackForSkill() {
+    return fillDeployStack([
+        'The user has stated what they want earlier in this conversation. Treat anything they',
+        'have already said as answered, and do not ask for it again.',
+    ].join('\n'), [
+        '**The resource model lives in [resources.md](./resources.md) — read it now if you have',
+        'not already.** It defines what each resource is, what it depends on, how to tell it is',
+        'ready (no two report it the same way), and what can still be changed after it exists.',
+        'The procedure below assumes you know it.',
+    ].join('\n'));
+}
 export const PROMPTS = [
     {
         name: 'deploy-stack',
@@ -1595,7 +1632,7 @@ export const PROMPTS = [
         // The replacer is a FUNCTION, not a replacement string: String.replace interprets `$&`,
         // "$`", `$'` and `$n` in a replacement string, so a value containing one of those would
         // splice pieces of the template back into the output.
-        render: (args) => DEPLOY_STACK.replace(/\{\{(GIVEN|RESOURCE_MODEL)\}\}/g, (_match, token) => token === 'GIVEN' ? given(args) : RESOURCE_MODEL),
+        render: (args) => fillDeployStack(given(args), RESOURCE_MODEL),
     },
     {
         name: 'resources',

@@ -18,10 +18,17 @@ nortezh-mcp login
 
 # 3. add it to Claude Code
 claude mcp add nortezh --scope user -- nortezh-mcp
+
+# 4. install the skill (Claude Code only)
+nortezh-mcp install-skill
 ```
 
-**4. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
+**5. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
 `55` API routes.
+
+The skill is what makes Claude follow the rules when you just say *"deploy this to nortezh"*
+without typing a slash command. It is a symlink into the installed package, so `npm i -g`
+updates flow through — no need to re-run it.
 
 <details>
 <summary>Without installing (npx)</summary>
