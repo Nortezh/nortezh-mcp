@@ -4,7 +4,8 @@ Everything user-facing is in [README.md](./README.md). This is the part that mat
 you are changing the server.
 
 ```bash
-npm run check      # verify the committed tools.ts, typecheck, test
+pnpm install
+pnpm check         # verify the committed tools.ts, typecheck, test
 ```
 
 `check` does **not** regenerate `src/generated/tools.ts` — it generates into memory and
@@ -14,7 +15,7 @@ repository, which a `git diff` guard did not.
 
 ## Is the client running my build?
 
-`npm run build` stamps `dist/build-info.json` with a counter that increases every time, plus
+`pnpm build` stamps `dist/build-info.json` with a counter that increases every time, plus
 the commit. It surfaces as `serverInfo.version`, so the server list shows:
 
 ```
@@ -67,10 +68,24 @@ reconnect away from running a deploy against the wrong cluster.
 
 ## dist/ is built at install time
 
-`dist/` is gitignored. The package installs straight from git, and `npm i -g` does **not**
-install devDependencies — so `tsx` and `typescript` are real **dependencies**, which is what
-lets the `prepare` script compile on install. That costs every user ~40MB and a few seconds
-of `tsc`; the alternative was committing build output, which goes stale silently.
+`dist/` is gitignored. The package installs straight from git, and a global install does
+**not** install devDependencies — so `tsx` and `typescript` are real **dependencies**, which
+is what lets the `prepare` script compile on install. That costs every user ~40MB and a few
+seconds of `tsc`; the alternative was committing build output, which goes stale silently.
+
+Two consequences of building at install time:
+
+- ⚠️ **pnpm refuses to run install-time build scripts on a git dependency** unless the
+  package is allowlisted: `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. Hence the
+  `--allow-build=nortezh-mcp` in every install command in the README. npm has no such guard.
+- `build` chains `tsx`/`tsc` **directly** rather than calling `npm run <sub-script>`. The
+  install runs under whichever package manager the *user* chose, and only the binaries in
+  `node_modules/.bin` are guaranteed to be there. (`prepare` still calls `npm run build` —
+  one hop, and npm ships with Node.)
+
+`.build-number` is gitignored too, so an installed copy always stamps `build.1`. For anything
+that was not built in this working tree, the **commit** in the version string is the identity;
+the counter only distinguishes local rebuilds.
 
 `skills/` **is** committed even though the build regenerates it. It is the guidance itself —
 worth reviewing as a diff and reading on GitHub — and `scripts/check-skill.ts` fails the

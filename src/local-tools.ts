@@ -3,15 +3,15 @@
 // Everything in src/generated/tools.ts is a route on the Nortezh API, generated from the
 // spec. This file is the other kind: a tool the server answers itself.
 //
-// There is exactly one, and it exists because of a gap the build stamp did not close.
-// `serverInfo.version` carries the stamp to the MCP *client*, so a human can read it in the
-// server list — but the model never sees serverInfo. It sees tool names, descriptions and
-// schemas, and nothing else. So "which build am I talking to?" was unanswerable in chat
-// unless a tool had just been added or removed, which is exactly the one-shot signal the
-// stamp replaced.
+// `serverInfo` exists because of a gap the build stamp did not close. `serverInfo.version`
+// carries the stamp to the MCP *client*, so a human can read it in the server list — but the
+// model never sees serverInfo. It sees tool names, descriptions and schemas, and nothing
+// else. So "which build am I talking to?" was unanswerable in chat unless a tool had just
+// been added or removed, which is exactly the one-shot signal the stamp replaced.
 //
-// Keep this list at one entry unless there is as good a reason. Every tool is paid for in
-// context on every request.
+// `deployGuide` exists because a prompt is user-invoked only. See below.
+//
+// Keep this list short. Every tool is paid for in context on every request.
 
 import { readBuildInfo, versionString } from './version.js'
 import { PROMPTS } from './prompts.js'
@@ -27,10 +27,11 @@ export interface LocalTool {
 }
 
 /**
- * The deploy-stack guidance, as `deployGuide` returns it and as the gate serves it.
+ * The deploy-stack guidance, as `deployGuide` returns it.
  *
  * Rendered from the same PromptSpec the slash command uses, so the two cannot drift — one
- * procedure, reachable three ways: the slash command, the tool, and the gate.
+ * procedure, reachable three ways: the slash command, this tool, and the bundled skill
+ * (generated from the same source by scripts/generate-skill.ts).
  *
  * The prepended note exists because the prompt is written for the slash-command path, where
  * nothing has been said yet: rendered with no arguments it opens "the user gave nothing up

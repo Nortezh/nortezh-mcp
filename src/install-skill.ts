@@ -4,9 +4,15 @@
 // Claude configuration behind their back is invisible to uninstall and surprising when it is
 // found; one documented command costs a line in the README and can be reversed with `rm`.
 //
-// A SYMLINK, not a copy, and pointed at the installed package. `npm i -g` replaces the
-// package contents in place, so an update flows through with no re-install — a copy would
-// silently serve the version that happened to be current on the day it was run.
+// A SYMLINK, not a copy, and pointed at the installed package. On npm that means an update
+// flows through with no re-install, because `npm i -g` replaces the package contents in
+// place — a copy would silently serve the version that happened to be current on the day it
+// was run.
+//
+// ⚠️ pnpm does NOT replace in place. Each version lands in its own content-addressed store
+// directory, so after `pnpm i -g` the link still points at the previous version's directory,
+// or at nothing if the store was pruned. Re-running this repoints it, which is why the
+// closing message says to, and why a stale or dangling link is repaired rather than refused.
 
 import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -56,6 +62,6 @@ export function installSkill(): void {
 
   symlinkSync(target, link, 'dir')
   console.error(`Installed: ${link} -> ${target}`)
-  console.error('It is a symlink into the installed package, so `npm i -g` updates flow through.')
+  console.error('Run this again after every update — on pnpm the link does not follow one.')
   console.error('Remove with: rm ~/.claude/skills/nortezh')
 }

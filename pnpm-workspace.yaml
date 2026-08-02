@@ -1,0 +1,6 @@
+# esbuild ships its platform binary as an optional dependency, so its postinstall script has
+# nothing left to do here — tsx runs without it (verified). Answering it in the repo is what
+# stops pnpm halting every install with ERR_PNPM_IGNORED_BUILDS, and keeps the decision out
+# of one machine's local approvals.
+allowBuilds:
+  esbuild: false

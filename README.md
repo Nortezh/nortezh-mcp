@@ -11,7 +11,7 @@ Needs **Node 18+** and **git**.
 
 ```bash
 # 1. install
-npm i -g github:Nortezh/nortezh-mcp
+pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp
 
 # 2. sign in — opens your browser
 nortezh-mcp login
@@ -27,32 +27,57 @@ nortezh-mcp install-skill
 `55` API routes.
 
 The skill is what makes Claude follow the rules when you just say *"deploy this to nortezh"*
-without typing a slash command. It is a symlink into the installed package, so `npm i -g`
-updates flow through — no need to re-run it.
+without typing a slash command. **Re-run step 4 after every update** — see
+[Updating](#updating).
+
+`--allow-build` is required because the package compiles itself at install time. Without it
+pnpm stops with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. On npm, drop the flag:
+`npm i -g github:Nortezh/nortezh-mcp`.
 
 <details>
-<summary>Without installing (npx)</summary>
+<summary>Without installing</summary>
 
 ```bash
-npx -y github:Nortezh/nortezh-mcp login
-claude mcp add nortezh --scope user -- npx -y github:Nortezh/nortezh-mcp
+pnpm dlx --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp login
+claude mcp add nortezh --scope user -- pnpm dlx --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp
 ```
 
 Always runs the latest `main`, but re-clones and recompiles on **every server start** —
-about 5 seconds each time you open a session or reconnect. Fine for trying it out; the
-global install is better for daily use.
+several seconds each time you open a session or reconnect, and no skill. Fine for trying it
+out; the global install is better for daily use.
 </details>
 
 ## Updating
 
 ```bash
-npm i -g github:Nortezh/nortezh-mcp     # pull the latest
+pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp   # pull the latest
+nortezh-mcp install-skill                                        # re-point the skill
 ```
 
 Then reconnect from `/mcp` — the tool list is cached when a session connects.
 
 `call serverInfo` tells you which build you are on. If it did not change, you did not
 reconnect.
+
+> ⚠️ The second command is not optional **on pnpm**. pnpm installs each version into its own
+> content-addressed directory, so the skill symlink still points at the version you had
+> before — or at nothing. npm replaces the package in place, so there it flows through on its
+> own; re-running is harmless either way.
+
+## Uninstalling
+
+In this order — the first step needs the command to still exist.
+
+```bash
+nortezh-mcp logout                    # delete the stored token
+rm ~/.claude/skills/nortezh           # the skill (a symlink; nothing else is touched)
+claude mcp remove nortezh --scope user
+pnpm rm -g nortezh-mcp                # npm rm -g nortezh-mcp
+```
+
+That is everything it put on your machine. `logout` removes
+`~/.nortezh/credentials.json`; if you skip it the token sits there until it expires. Nothing
+on Nortezh itself is affected — projects, deployments and databases are untouched.
 
 ## Login
 
