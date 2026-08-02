@@ -13,7 +13,7 @@ import { randomBytes } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { platform } from 'node:os'
-import { AddressInfo } from 'node:net'
+import type { AddressInfo } from 'node:net'
 
 import { writeCredentials, type Credentials } from './config.js'
 
@@ -26,10 +26,20 @@ function page(title: string, body: string): string {
 }
 
 function openBrowser(url: string): void {
-  const command =
-    platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'start' : 'xdg-open'
+  // ⚠️ Windows needs `cmd /c start "" <url>`, not `start <url>` through a shell.
+  //
+  // The login URL always carries two query parameters, so it always contains `&` — and cmd
+  // treats an unquoted `&` as a command separator. `spawn('start', [url], {shell: true})`
+  // therefore ran `start …?state=X`, then tried to execute `callback=http://…` as a second
+  // command. The empty string is not a mistake: `start` reads its first quoted argument as
+  // the window title, so without it a quoted URL becomes the title and nothing opens.
+  const [command, args] =
+    platform() === 'win32'
+      ? (['cmd', ['/c', 'start', '', url]] as const)
+      : ([platform() === 'darwin' ? 'open' : 'xdg-open', [url]] as const)
+
   try {
-    const child = spawn(command, [url], { stdio: 'ignore', detached: true, shell: platform() === 'win32' })
+    const child = spawn(command, [...args], { stdio: 'ignore', detached: true })
     child.on('error', () => {
       /* the URL is printed too; a failure to launch is not fatal */
     })
@@ -54,6 +64,11 @@ export async function login(apiUrl: string): Promise<string> {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      // close() stops new connections but waits for open ones, and a browser holds the
+      // callback socket open with keep-alive — which kept `nortezh-mcp login` sitting there
+      // after it had already printed success. The response is fully written by this point,
+      // so dropping the sockets loses nothing.
+      server.closeAllConnections?.()
       server.close()
       fn()
     }

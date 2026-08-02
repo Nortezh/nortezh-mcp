@@ -78,13 +78,18 @@ export function writeCredentials(credentials: Credentials): string {
  * Only removes the file. A token supplied through NORTEZH_TOKEN lives in the environment,
  * so `logout` cannot reach it — the caller says so rather than reporting a sign-out that
  * did not happen.
+ *
+ * ⚠️ Only ENOENT means "there were none". Swallowing every error reported a permission
+ * problem as "already signed out", which is the one lie this function must not tell: the
+ * token is still on disk and the user has been told it is gone.
  */
 export function clearCredentials(): boolean {
   try {
     unlinkSync(credentialsPath())
     return true
-  } catch {
-    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false
+    throw error
   }
 }
 

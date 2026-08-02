@@ -24,12 +24,19 @@ const root = resolve(here, '..')
 const spec = JSON.parse(readFileSync(resolve(root, 'spec/swagger.json'), 'utf8')) as SwaggerDocument
 const definitions = spec.definitions ?? {}
 
+// operationId is the tool name, so a collision would silently pick whichever route the spec
+// happened to list last — and tool names are effectively permanent once published. Fail.
 const operations = new Map<string, { path: string; operation: SwaggerOperation }>()
 for (const [path, methods] of Object.entries(spec.paths ?? {})) {
   for (const operation of Object.values(methods)) {
-    if (operation.operationId !== undefined) {
-      operations.set(operation.operationId, { path, operation })
+    if (operation.operationId === undefined) continue
+    const clash = operations.get(operation.operationId)
+    if (clash !== undefined) {
+      throw new Error(
+        `generate: two routes share operationId ${operation.operationId}: ${clash.path} and ${path}`,
+      )
     }
+    operations.set(operation.operationId, { path, operation })
   }
 }
 
