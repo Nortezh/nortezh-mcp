@@ -45,6 +45,26 @@ stamp is written to `dist/`, never `src/`: it contains a timestamp and a counter
 every run, and `check-generated.ts` compares committed generated output against a fresh
 generation — a stamp in `src/` would fail that check permanently.
 
+## Environment
+
+Both optional; the defaults cover normal use, which is why they are not in the README.
+
+| variable | default | |
+|---|---|---|
+| `NORTEZH_API_URL` | `https://api.nortezh.com/user` | must include `/user` — every user route is mounted under it |
+| `NORTEZH_TOKEN` | — | use instead of the stored login. Never replaced, and no browser is opened, so this is what CI wants |
+
+Point a client at a local stack:
+
+```bash
+claude mcp add nortezh-local --scope user \
+  -e NORTEZH_API_URL=http://localhost:18080/user \
+  -- node "$PWD/dist/index.js"
+```
+
+Register it under a **different name** than the production one, or you will be one
+reconnect away from running a deploy against the wrong cluster.
+
 ## Layout
 
 ```

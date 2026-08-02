@@ -1,6 +1,6 @@
 // Where the server gets its API base URL and bearer token.
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -70,6 +70,22 @@ export function writeCredentials(credentials: Credentials): string {
   // world-readable file would keep its permissions. Set them unconditionally.
   chmodSync(path, 0o600)
   return path
+}
+
+/**
+ * Deletes the stored credentials. Returns false when there were none.
+ *
+ * Only removes the file. A token supplied through NORTEZH_TOKEN lives in the environment,
+ * so `logout` cannot reach it — the caller says so rather than reporting a sign-out that
+ * did not happen.
+ */
+export function clearCredentials(): boolean {
+  try {
+    unlinkSync(credentialsPath())
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** The API base URL: NORTEZH_API_URL if set, production otherwise. */

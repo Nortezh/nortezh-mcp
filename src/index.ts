@@ -17,7 +17,15 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 
 import { NortezhClient } from './client.js'
-import { API_URL_ENV, DEFAULT_API_URL, resolveApiUrl, resolveAuth, TOKEN_ENV } from './config.js'
+import {
+  API_URL_ENV,
+  clearCredentials,
+  credentialsPath,
+  DEFAULT_API_URL,
+  resolveApiUrl,
+  resolveAuth,
+  TOKEN_ENV,
+} from './config.js'
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { PROMPTS } from './prompts.js'
@@ -228,6 +236,19 @@ async function main(): Promise<void> {
     return
   }
 
+  if (command === 'logout') {
+    const removed = clearCredentials()
+    console.error(
+      removed ? `Signed out. Removed ${credentialsPath()}` : 'Already signed out — no stored credentials.',
+    )
+    // Saying "signed out" while an env token keeps working would be a lie: the server
+    // prefers NORTEZH_TOKEN over the file and would still authenticate.
+    if (process.env[TOKEN_ENV]?.trim()) {
+      console.error(`⚠️  ${TOKEN_ENV} is still set, so calls will keep using it. Unset it to fully sign out.`)
+    }
+    return
+  }
+
   if (command === 'version' || command === '--version') {
     const info = readBuildInfo()
     console.log(versionString(info))
@@ -248,6 +269,7 @@ async function main(): Promise<void> {
         'Usage:',
         '  nortezh-mcp            run the MCP server over stdio (what an MCP client starts)',
         '  nortezh-mcp login      sign in via the browser and store a token',
+        '  nortezh-mcp logout     delete the stored token',
         '  nortezh-mcp version',
         '',
         'Environment:',
