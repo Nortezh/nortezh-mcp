@@ -64,7 +64,9 @@ test('serverInfo is callable and reports the build', async () => {
   const result = tool.run() as Record<string, unknown>
   assert.equal(typeof result.version, 'string')
   assert.equal(typeof result.build, 'number')
-  assert.ok(Array.isArray(result.prompts))
+  // Names the bundled skill, since that is where the guidance lives now — a session can tell
+  // whether the skill it is following came from this package.
+  assert.match(String(result.skill), /^nortezh \(/)
   // Counts have to include this tool, or the number disagrees with tools/list.
   const { TOOLS } = await import('../src/generated/tools.js')
   assert.equal(result.apiRoutes, TOOLS.length)

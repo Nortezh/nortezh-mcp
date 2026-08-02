@@ -19,14 +19,14 @@ nortezh-mcp login
 # 3. add it to Claude Code
 claude mcp add nortezh --scope user -- nortezh-mcp
 
-# 4. install the skill (Claude Code only)
+# 4. install the skills (Claude Code only)
 nortezh-mcp install-skill
 ```
 
 **5. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
 `55` API routes.
 
-The skill is what makes Claude follow the rules when you just say *"deploy this to nortezh"*
+The skills are what make Claude follow the rules when you just say *"deploy this to nortezh"*
 without typing a slash command. **Re-run step 4 after every update** — see
 [Updating](#updating).
 
@@ -99,25 +99,31 @@ Just ask:
 - *"roll back web to the previous revision"*
 - *"add DATABASE_URL to the acme env group and redeploy api"*
 
-For anything that **creates or changes** infrastructure, start with the guided workflow:
+Claude loads the right guidance on its own — the skills install as a small plugin:
 
 ```
-/nortezh:deploy-stack     set up or change a stack, end to end
-/nortezh:resources        what each resource is and depends on
+nortezh                  always on; routes to the rest and carries the hard rules
+nortezh:resources        what each resource is, depends on, and how you know it is ready
+nortezh:deployer         creating or changing anything — plan, approve, execute, report
+nortezh:reporter         state of a project: running, pending, failing
+nortezh:troubleshooter   why something is failing
 ```
 
-(`nortezh` is the server name you gave `claude mcp add` — rename it there and the
-commands follow.)
+Only the descriptions are always in context (~400 tokens for the set); a skill's body loads
+when it applies. Ask for one by name if you want to force it — *"use nortezh:troubleshooter
+on api"*.
 
-`deploy-stack` reads your repo, takes inventory, asks what it cannot work out, then writes a
-plan and **waits for your approval before touching anything**. It creates the deployment
+`nortezh:deployer` reads your repo, takes inventory, asks what it cannot work out, then writes
+a plan and **waits for your approval before touching anything**. It creates the deployment
 pointing at the tag CI will push — that first deploy fails on purpose — writes the GitHub
 Actions workflow, and goes green once you push. It never builds images locally and never
 asks for a credential; DNS records, service-account keys and pull secrets come back to you
 with step-by-step instructions.
 
-> ⚠️ Ask it *before* it starts calling tools. It is a slash command, so it only applies when
-> you invoke it — a plain "deploy this to nortezh" runs without any of it.
+> ⚠️ **Step 4 is not optional if you want any of that.** The skills are the only place the
+> rules live — the server itself ships tools and nothing else. Without them, "deploy this to
+> nortezh" runs with none of the guidance, including the part about not building images
+> locally.
 
 ## Good to know
 

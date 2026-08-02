@@ -3,18 +3,22 @@
 // Everything in src/generated/tools.ts is a route on the Nortezh API, generated from the
 // spec. This file is the other kind: a tool the server answers itself.
 //
-// `serverInfo` exists because of a gap the build stamp did not close. `serverInfo.version`
-// carries the stamp to the MCP *client*, so a human can read it in the server list — but the
-// model never sees serverInfo. It sees tool names, descriptions and schemas, and nothing
-// else. So "which build am I talking to?" was unanswerable in chat unless a tool had just
-// been added or removed, which is exactly the one-shot signal the stamp replaced.
+// There is exactly one, and keeping it that way is the point — every tool is paid for in
+// context on every request, so a tool has to earn its description.
 //
-// `deployGuide` exists because a prompt is user-invoked only. See below.
+// `serverInfo` earns it because the build stamp does not reach the model. `serverInfo.version`
+// carries the stamp to the MCP *client*, so a human can read it in the server list, but the
+// model only ever sees tool names, descriptions and schemas. Without this, "which build am I
+// talking to?" was unanswerable in chat unless a tool had just been added or removed — the
+// one-shot signal the stamp was introduced to replace.
 //
-// Keep this list short. Every tool is paid for in context on every request.
+// A `deployGuide` tool used to sit here, returning the deploy procedure so the model could
+// pull it without the user typing a slash command. It was removed with the prompts: the
+// guidance now ships as the `nortezh` skill, which reaches the model earlier (before Bash,
+// which no MCP mechanism can observe) and costs nothing until it fires. Keeping the tool would
+// have meant ~90 tokens on every request to deliver the same text a second way.
 
 import { readBuildInfo, versionString } from './version.js'
-import { PROMPTS } from './prompts.js'
 import { TOOLS } from './generated/tools.js'
 
 export interface LocalTool {
@@ -25,29 +29,6 @@ export interface LocalTool {
   /** Answered in-process. No network, so no failure mode worth an error envelope. */
   run: () => unknown
 }
-
-/**
- * The deploy-stack guidance, as `deployGuide` returns it.
- *
- * Rendered from the same PromptSpec the slash command uses, so the two cannot drift — one
- * procedure, reachable three ways: the slash command, this tool, and the bundled skill
- * (generated from the same source by scripts/generate-skill.ts).
- *
- * The prepended note exists because the prompt is written for the slash-command path, where
- * nothing has been said yet: rendered with no arguments it opens "the user gave nothing up
- * front". Reached as a tool result that is false — the request is already in the
- * conversation — and left uncorrected the model re-interviews the user for what they just
- * said.
- */
-export const DEPLOY_STACK_GUIDE = [
-  '⚠️ You are reading this mid-conversation, as a tool result. The user has already said',
-  'what they want, above. Treat anything they have stated as answered and do not ask again.',
-  'Everything else below applies unchanged.',
-  '',
-  '---',
-  '',
-  PROMPTS.find((prompt) => prompt.name === 'deploy-stack')?.render({}) ?? '',
-].join('\n')
 
 export const LOCAL_TOOLS: LocalTool[] = [
   {
@@ -71,30 +52,11 @@ export const LOCAL_TOOLS: LocalTool[] = [
         stale: info.build === 0 ? 'unknown — running from source, no build stamp' : undefined,
         tools: TOOLS.length + LOCAL_TOOLS.length,
         apiRoutes: TOOLS.length,
-        prompts: PROMPTS.map((prompt) => prompt.name),
+        // The guidance lives in the bundled skill, not in this server. Naming it here is how
+        // a session can tell whether the skill it is following came from this package.
+        skill: 'nortezh (resources, deployer, reporter, troubleshooter)',
       }
     },
-  },
-  {
-    name: 'deployGuide',
-    // This description is the ENTIRE trigger surface. It is the only part of the guidance
-    // that is always in context, and the model decides from it alone whether to pull the
-    // rest — so it names the platform, the verbs, and the read-only cases to stay out of.
-    //
-    // Excluding lookups matters: firing on "what's deployed?" would load ~19k tokens to
-    // answer a question that needs one tool call.
-    description:
-      'Read BEFORE any call that creates, changes or deletes something on Nortezh — ' +
-      'deploying a service, adding or patching a deployment, database, disk, domain, route, ' +
-      'env group or pull secret, wiring GitHub Actions for it, or working out why a Nortezh ' +
-      'deploy failed. Returns the required order, the approval gate, and the steps the user ' +
-      'must do themselves. Do NOT call it for read-only questions ("list my projects", ' +
-      "\"what's deployed\", \"show metrics\") — use the nortezh tools directly for those.",
-    inputSchema: { type: 'object', properties: {} },
-    readOnly: true,
-    // The tool exists because a prompt is user-invoked only (the model has no prompts/get),
-    // so a plain "deploy this to nortezh" would otherwise run with none of it in context.
-    run: () => DEPLOY_STACK_GUIDE,
   },
 ]
 

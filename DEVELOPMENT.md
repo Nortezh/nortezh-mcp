@@ -28,14 +28,15 @@ Everything after `+` is semver build metadata and ignored for precedence, so a c
 parses the string still reads `0.1.0`.
 
 ```bash
-node dist/index.js version    # full stamp, build time, tool and prompt counts
+node dist/index.js version    # full stamp, build time, tool counts
 ```
 
 The model cannot see `serverInfo.version` — it sees tool names, descriptions and schemas and
 nothing else. So the same stamp is also exposed as a **`serverInfo` tool**, which is how you
-ask *in chat* whether the connected server is current. It lives in `src/local-tools.ts`
-alongside `deployGuide`: answered in-process, no API call, and checked before the generated
-tools so it still works when the token has expired.
+ask *in chat* whether the connected server is current. It lives in `src/local-tools.ts` —
+answered in-process, no API call, and checked before the generated tools so it still works
+when the token has expired. It is the **only** local tool, and should stay that way: every
+tool costs its description on every request.
 
 An MCP client caches the tool list at connect time, so **every rebuild needs a reconnect** —
 and the reconnect has to happen after the build finishes, or it picks up a half-written
@@ -87,9 +88,8 @@ Two consequences of building at install time:
 that was not built in this working tree, the **commit** in the version string is the identity;
 the counter only distinguishes local rebuilds.
 
-`skills/` **is** committed even though the build regenerates it. It is the guidance itself —
-worth reviewing as a diff and reading on GitHub — and `scripts/check-skill.ts` fails the
-build if it drifts from `src/prompts.ts`.
+`skills/` is committed and **is not generated** — it is hand-authored markdown, and the only
+home the guidance has. Nothing in `src/` contains it.
 
 ⚠️ `tsc` does not delete the output of a source file you removed. If you delete something in
 `src/`, delete its `dist/` counterpart too, or it keeps being served.
@@ -101,8 +101,6 @@ scripts/allowlist.ts   which operations become tools — the only hand-maintaine
 scripts/generate.ts    spec + allowlist -> src/generated/tools.ts
 scripts/sync-spec.ts   vendor swagger.json from ../nortezh-backend
 scripts/check-generated.ts  fail if the committed tools.ts is not what the generator makes
-scripts/generate-skill.ts   src/prompts.ts -> skills/nortezh/
-scripts/check-skill.ts      fail if the committed skill is not what that generator makes
 scripts/stamp.ts       write dist/build-info.json — the per-build counter and commit
 src/version.ts         read that stamp, or fall back when running from source
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
@@ -110,83 +108,100 @@ src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
-src/prompts.ts         guided workflows exposed over prompts/list
-src/local-tools.ts     tools answered in-process: serverInfo, deployGuide
+src/local-tools.ts     serverInfo — the one tool answered in-process
 src/install-skill.ts   `install-skill` — symlink skills/nortezh into ~/.claude/skills
+skills/nortezh/        the guidance: a Claude Code plugin, plain markdown, hand-authored
 src/index.ts           MCP server, stdio transport
 ```
 
-## The guidance reaches the model three ways
+## The guidance lives in the skill, and nowhere else
 
-An MCP prompt is **user-invoked only** — the model has no `prompts/get`, so a plain "deploy
-this to nortezh" runs with none of it in context. That is not theoretical: a run on a build
-containing every rule still built an image locally and pushed it with the laptop's docker
-credential, because the slash command was never typed.
+⚠️ **Only a skill reaches the shell.** `docker build`, `docker push` and reading a credential
+store never touch an MCP tool, so nothing inside the server can observe them — let alone stop
+them. Anything that enforces at a tool call arrives after the damage. A skill's frontmatter is
+in context from the first token of the turn, which is the only place early enough.
+
+Two mechanisms were built for this job and removed once the skill existed:
+
+- a **`GuideGate`** that refused the first mutating tool call — it fired at
+  `deploymentCreate`, long after the image had been built and pushed;
+- **MCP prompts** (`/nortezh:deployer`, `/nortezh:resources`) and a **`deployGuide`** tool,
+  which delivered the same text a second and third way. The prompts needed a generator and a
+  drift-check to stay equal to the skill; `deployGuide` cost ~90 tokens of description on
+  every request. Both were duplicated work once `skills/nortezh/` existed.
+
+So the server ships **tools only**, and `skills/nortezh/` is the single home for the
+procedure. The trade is real and worth stating: an MCP client that does not load Claude Code
+plugins — Cursor, Zed, Claude Desktop — gets the 55 tools and no guidance at all.
+
+### skills/nortezh/ is a plugin, not one skill
+
+`.claude-plugin/plugin.json` with `skills: ["./"]` is what makes each `skills/<name>/SKILL.md`
+invocable as `nortezh:<name>`. Landing the directory at `~/.claude/skills/nortezh` is enough
+for Claude Code to auto-load it as `nortezh@skills-dir` — no marketplace, no
+`claude plugin install`. The root `SKILL.md` stays an ordinary always-on skill and routes
+between the rest.
 
 ```
-prompts.ts  DEPLOY_STACK / RESOURCE_MODEL
-   ├─▶ /nortezh:deploy-stack     the user types it
-   ├─▶ deployGuide tool          the model calls it — description always in context
-   └─▶ skills/nortezh/           the model loads it BEFORE it runs anything
+SKILL.md                        ~1k   router + the invariants
+skills/resources/SKILL.md       ~4k   nortezh:resources
+skills/deployer/SKILL.md        ~15k  nortezh:deployer
+skills/reporter/SKILL.md        ~1.4k nortezh:reporter
+skills/troubleshooter/SKILL.md  ~1.8k nortezh:troubleshooter
 ```
 
-⚠️ **Only the skill reaches the shell.** `docker build`, `docker push` and reading a
-credential store never touch an MCP tool, so nothing inside the server can see them — a
-prompt, a tool, and an earlier server-side gate all arrive too late by construction. The
-skill's frontmatter is in context from the first token of the turn, which is the only place
-that catches it. A `GuideGate` that blocked the first mutating call was tried and removed for
-exactly this reason: it fired at `deploymentCreate`, long after the image had been built.
+Cost is graduated: ~400 tokens of descriptions are always on, the router loads when Nortezh
+comes up, and a capability's body only when it applies. One flat file would spend the whole
+procedure answering "how much does a disk cost?". `claude plugin details nortezh@skills-dir`
+prints the real per-component numbers.
 
-The skill is three files so the cost is graduated — `SKILL.md` (~1k) whenever Nortezh comes
-up, `resources.md` (~4k) for any Nortezh work, `deploy-stack.md` (~15k) only before something
-is created or changed. `deploy-stack.md` **references** `resources.md` rather than inlining
-it; the prompt has to inline it, because a prompt cannot fetch another prompt.
+⚠️ Adding a skill means adding a line to the router by hand. Nothing discovers a sibling.
 
-`SKILL.md` carries the invariants that must survive even if no sibling file is read — and
-those are the same ones that govern Bash, which is why they live in the always-loaded file.
+`deployer` **references** `nortezh:resources` rather than inlining it — a skill can name
+another skill, so duplicating would double the cost and give the next edit two places to
+drift apart.
+
+The router carries the invariants that must survive even if no capability is loaded — the same
+ones that govern Bash, which is why they live in the always-loaded file.
 
 Installed with `nortezh-mcp install-skill`, an explicit command rather than an npm
 `postinstall`: a package writing into someone's Claude config unasked is invisible to
-uninstall. It symlinks into the installed package, so `npm i -g` updates flow through.
+uninstall.
 
-## Prompts are how a "skill" ships with the server
+### What the procedure guarantees
 
-`src/prompts.ts` holds the guided workflows. The client lists them over `prompts/list` and
-surfaces them as slash commands, so `claude mcp add` is the entire install — no `SKILL.md`
-to symlink, and it works in any MCP client rather than only Claude Code.
-
-`deploy-stack` is structured as seven fixed steps, and two of its properties are load-bearing
-rather than stylistic:
+`deployer` is seven fixed steps, and two properties are load-bearing rather than stylistic:
 
 - **Steps 1–5 are read-only.** The first mutating call happens in Step 6, after the user
   approves a written plan. Anything that would let a create slip earlier — a rule saying
   "there is no fixed sequence", an operation described before the gate — is a bug, and
-  `test/prompts.test.ts` asserts against it.
+  `test/guidance.test.ts` asserts against it.
 - **The plan and report templates are part of the contract.** Their sections are asserted,
   including the ones people delete as noise: `Explicitly not doing`, `Not done`, `To undo`.
   A report that silently omits what did not run reads as success.
 
-A third property is enforced by the **allowlist**, not the prompt: `pullsecretCreate` is
+A third property is enforced by the **allowlist**, not the text: `pullsecretCreate` is
 withheld. Its inputs are a registry `serverUrl`, `username` and `password`, so exposing it
 means the credentials have to travel through the conversation to reach it. Instructing the
-model not to call a tool it has is weaker than not shipping the tool — the prompt explains
-the reasoning so the next person does not add it back, and `WITHHELD_TOOLS` in
-`test/prompts.test.ts` lets the prompt name it without the existence check objecting.
+model not to call a tool it has is weaker than not shipping the tool — the skill explains the
+reasoning so the next person does not add it back, and `WITHHELD_TOOLS` in
+`test/guidance.test.ts` lets it name the tool without the existence check objecting.
 
-The same logic covers images: the prompt forbids `docker build` / `docker push` outright.
-A locally built image cannot be deployed (the cluster pulls from a registry) and pushing one
-by hand needs the same credentials. CI owns images: a deployment is created pointing at the
-tag CI will push, fails once because nothing is there yet, and goes green when the workflow
-runs. Both rules are written as the route that works rather than as a list of forbidden
-commands — a blocklist cannot enumerate podman, nerdctl or whatever is next, and leaves the
-model to improvise an alternative.
+The same logic covers images: the skill forbids `docker build` / `docker push` outright. A
+laptop build pushes fine and the cluster pulls it happily — that is the problem: it is
+unreviewed, unreproducible, and pushing it needs a **write** credential that does not belong
+in the session. CI owns images: a deployment is created pointing at the tag CI will push,
+fails once because nothing is there yet, and goes green when the workflow runs. Both rules are
+written as the route that works rather than as a list of forbidden commands — a blocklist
+cannot enumerate podman, nerdctl or whatever is next, and leaves the model to improvise an
+alternative.
 
 Output goes to a **terminal**, not a markdown viewer, so the templates use fenced blocks
 rather than pipe tables, and emoji chips only on plain lines — never inside the box-drawing
-diagram, where a double-width glyph breaks the boxes. The prompt's own tables are reference
-material for the model and are exempt; the rule is scoped to what reaches the user.
+diagram, where a double-width glyph breaks the boxes. Reference tables the model reads are
+exempt; the rule is scoped to what reaches the user.
 
-Write into a prompt only what the tool schemas **cannot** carry:
+Write into a skill only what the tool schemas **cannot** carry:
 
 - the order operations must happen in, and what depends on what
 - which failures are expected rather than wrong (`CAN_MAP_ONLY_WEB_SERVICE` on a Worker,
@@ -194,14 +209,14 @@ Write into a prompt only what the tool schemas **cannot** carry:
 - asynchrony — that `deploymentGet.actionStatus` must be polled until it leaves `pending`
 - steps that leave this API entirely: DNS records, GitHub secrets, service-account keys
 
-Do **not** restate a single call's parameters. That comes from the generated schema and a
+Do **not** restate a single call's parameters. That comes from the generated schema, and a
 copy only goes stale.
 
-⚠️ The `deploy-stack` prompt embeds a GitHub Actions workflow inside a TypeScript template
-literal, so `${{ … }}` has to be escaped. One backslash too many ships `\${{ secrets.X }}`,
-which Actions treats as a literal string, and `\\` where the shell wants a single line
-continuation — a workflow that reviews fine and fails at run time. `test/prompts.test.ts`
-asserts the rendered text, and also that every tool the prompt names is actually exposed.
+`test/guidance.test.ts` asserts the skill text directly — including that every tool it names
+is actually exposed, and that the embedded GitHub Actions workflow is intact. That workflow
+used to live inside a TypeScript template literal, where `${{ … }}` needed escaping and one
+backslash too many shipped `\${{ secrets.X }}` — a workflow that reviewed fine and failed at
+run time. It is plain markdown now, which is most of why the file moved.
 
 ## Tools are generated, not written
 

@@ -9,12 +9,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import {
-  CallToolRequestSchema,
-  GetPromptRequestSchema,
-  ListPromptsRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js'
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 
 import { NortezhClient } from './client.js'
 import {
@@ -28,7 +23,6 @@ import {
 } from './config.js'
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
-import { PROMPTS } from './prompts.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
 import { installSkill } from './install-skill.js'
 import { LOCAL_TOOLS } from './local-tools.js'
@@ -103,39 +97,15 @@ async function runServer(): Promise<void> {
   // The build stamp goes in serverInfo.version, which is what a client shows in its server
   // list — so "am I running the build I just made" is answerable by reading a number rather
   // than by hunting for a tool that was removed.
+  // Tools only. The guided workflows used to ship here as MCP prompts as well, rendered from
+  // the same text as the skill — two surfaces, one procedure, and a generator plus a
+  // drift-check to keep them equal. The skill does the job better (it is in context before the
+  // first tool call, and before Bash, which MCP cannot see at all), so the prompts went and
+  // `skills/nortezh/` is the single home for the guidance.
   const server = new Server(
     { name: 'nortezh', version: versionString() },
-    { capabilities: { tools: {}, prompts: {} } },
+    { capabilities: { tools: {} } },
   )
-
-  // Prompts are how a guided workflow ships WITH the server: the client surfaces them as
-  // slash commands, so `claude mcp add` is the entire install. See src/prompts.ts.
-  server.setRequestHandler(ListPromptsRequestSchema, async () => ({
-    prompts: PROMPTS.map((prompt) => ({
-      name: prompt.name,
-      description: prompt.description,
-      arguments: prompt.arguments,
-    })),
-  }))
-
-  server.setRequestHandler(GetPromptRequestSchema, async (request) => {
-    const prompt = PROMPTS.find((candidate) => candidate.name === request.params.name)
-    if (prompt === undefined) throw new Error(`Unknown prompt: ${request.params.name}`)
-
-
-    return {
-      description: prompt.description,
-      messages: [
-        {
-          role: 'user' as const,
-          content: {
-            type: 'text' as const,
-            text: prompt.render(request.params.arguments ?? {}),
-          },
-        },
-      ],
-    }
-  })
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
@@ -267,7 +237,7 @@ async function main(): Promise<void> {
     } else {
       console.log(`build ${info.build}${info.commit === null ? '' : ` from ${info.commit}`}, built ${info.builtAt}`)
     }
-    console.log(`${TOOLS.length} tools, ${PROMPTS.length} prompts`)
+    console.log(`${TOOLS.length} API tools + ${LOCAL_TOOLS.length} local`)
     return
   }
 

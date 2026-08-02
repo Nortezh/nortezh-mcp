@@ -1,45 +1,38 @@
-import assert from 'node:assert/strict'
-import { test } from 'node:test'
+// The guidance itself: the resource model and the seven-step deploy procedure.
+//
+// These assert CONTENT, not plumbing — each one pins a fact that was wrong at some point and
+// would be wrong again silently. They used to run against the rendered MCP prompt; the prompts
+// are gone and the skill markdown is the source, so they read the files directly.
 
-import { PROMPTS } from '../src/prompts.js'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { test } from 'node:test'
+import { fileURLToPath } from 'node:url'
+
 import { TOOLS } from '../src/generated/tools.js'
 
-const deployStack = PROMPTS.find((prompt) => prompt.name === 'deploy-stack')
+const skills = resolve(dirname(fileURLToPath(import.meta.url)), '../skills/nortezh/skills')
+const body = (name: string) => readFileSync(join(skills, name, 'SKILL.md'), 'utf8')
+
+/** The procedure alone — it points at the resource model rather than inlining it. */
+const procedure = body('deployer')
+/** The RESOURCE_MODEL alone. */
+const RESOURCE_MODEL = body('resources')
+/** What a session that followed the skill actually has in context: both. */
+const guidance = `${procedure}\n${RESOURCE_MODEL}`
 
 /** Every property name across every tool schema — these are fields, not tool names. */
 const FIELD_NAMES = new Set(
   TOOLS.flatMap((tool) => Object.keys((tool.inputSchema as { properties?: object }).properties ?? {})),
 )
 
-test('deploy-stack exists and names its arguments', () => {
-  assert.ok(deployStack !== undefined)
-  assert.deepEqual(
-    deployStack.arguments.map((argument) => argument.name),
-    ['project', 'name', 'image', 'location', 'domain', 'repo'],
-  )
-  // Every argument is optional: the prompt has to be usable bare, as a slash command with
-  // no arguments typed.
-  assert.equal(deployStack.arguments.some((argument) => argument.required === true), false)
-})
-
-test('supplied arguments appear in the rendered text', () => {
-  const text = deployStack!.render({ project: 'acme', name: 'api', image: '' })
-  assert.match(text, /- project: acme/)
-  assert.match(text, /- name: api/)
-  // Blank values are dropped rather than rendered as an empty line the model must parse.
-  assert.equal(text.includes('- image:'), false)
-})
-
-test('with no arguments it sends the model to the interview', () => {
-  assert.match(deployStack!.render({}), /nothing up front/)
-})
-
 test('readiness is described differently for deployments and for databases/disks', () => {
   // The single most dangerous thing to get wrong here: api/deployment.ActionStatus
   // marshals as a name and has "failed", while pkg/api.ActionStatus (databases, disks)
   // ships as a bare integer 1/2 with no failure value. Treating them alike either moves
   // on before a database exists or waits forever for a "failed" that cannot arrive.
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /\*\*string\*\* `"success"`/)
   assert.match(text, /\*\*number `2`\*\*/)
   assert.match(text, /no failure value at all/)
@@ -47,10 +40,10 @@ test('readiness is described differently for deployments and for databases/disks
 
 test('the first deploy is expected to fail, and that is stated as expected', () => {
   // The deployment is created pointing at <registry>/<path>:latest before CI has pushed
-  // anything, so the pull fails. A model that reads "failed" as a problem will retry it,
+  // anything, so the pull fails. A RESOURCE_MODEL that reads "failed" as a problem will retry it,
   // dig through logUrl, or swap in nginx to get a green status — each of which breaks the
   // flow at the point where it is working correctly.
-  const text = deployStack!.render({})
+  const text = guidance
   const flat = text.replace(/\s+/g, ' ')
   assert.match(text, /<registry>\/<path>:latest/)
   assert.match(flat, /Say it will fail before it does/)
@@ -63,7 +56,7 @@ test('the first deploy is expected to fail, and that is stated as expected', () 
 test('the deployment flow is drawn, not only described', () => {
   // Three actors and an expected failure in the middle. Prose makes the reader hold the
   // handoffs in their head; the diagram shows which of them is acting at each step.
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /you {24}user {18}github actions/)
   assert.match(text, /actionStatus "failed" {3}⚠️ EXPECTED — nothing to pull/)
   assert.match(text, /push <registry>\/<path>:<sha>/)
@@ -74,22 +67,24 @@ test('the deployment flow is drawn, not only described', () => {
 test('the pull secret must exist before CI pushes, not before the first deploy', () => {
   // Both deploys fail without it, but only the second one is supposed to. A missing pull
   // secret hides inside the expected failure and then surfaces as an infinite wait.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /The pull secret must exist before CI pushes, not before this create/)
   assert.match(flat, /hides inside the expected failure/)
 })
 
-test('it tells the model to ask with options rather than assume', () => {
+test('it tells the resource model to ask with options rather than assume', () => {
   // The text wraps, so collapse whitespace before matching the phrase.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Never pick a project, location, engine, size, port or domain on their behalf/)
 })
 
-test('the placeholder is always substituted', () => {
-  for (const prompt of PROMPTS) {
-    for (const rendered of [prompt.render({}), prompt.render({ project: 'x' })]) {
-      assert.equal(/\{\{[A-Z_]+\}\}/.test(rendered), false, `${prompt.name} left a placeholder`)
-    }
+test('no templating leaks into the skill files', () => {
+  // The procedure was a TypeScript template with {{GIVEN}}/{{RESOURCE_MODEL}} tokens and, for
+  // a while, <!-- prompt:… --> substitution markers. Both are gone; a leftover would ship as
+  // literal text the resource model reads as an instruction.
+  for (const [name, text] of [['deployer', procedure], ['resources', RESOURCE_MODEL]] as const) {
+    assert.equal(/\{\{[A-Z_]+\}\}/.test(text), false, `${name} left a placeholder`)
+    assert.equal(text.includes('<!-- prompt:'), false, `${name} left a substitution marker`)
   }
 })
 
@@ -102,11 +97,11 @@ test('the placeholder is always substituted', () => {
  */
 const WITHHELD_TOOLS = new Set(['pullsecretCreate'])
 
-test('every tool the prompt instructs the model to call actually exists', () => {
+test('every tool the prompt instructs the resource model to call actually exists', () => {
   // The prompt names tools in prose, so a rename or an allowlist change could leave it
-  // telling the model to call something that is not there.
+  // telling the resource model to call something that is not there.
   const names = new Set(TOOLS.map((tool) => tool.name))
-  const text = PROMPTS.map((prompt) => prompt.render({})).join('\n')
+  const text = guidance
 
   const referenced = [...text.matchAll(/`([a-z][A-Za-z]+)`/g)]
     .map((match) => match[1] as string)
@@ -129,7 +124,7 @@ test('the embedded workflow YAML is emitted verbatim, not escaped', () => {
   // which GitHub Actions treats as a literal string rather than a secret, and `\\` where
   // the shell needs a single line continuation. Both produce a workflow that looks right
   // in review and fails at run time.
-  const text = deployStack!.render({})
+  const text = guidance
 
   assert.match(text, /\$\{\{ secrets\.NORTEZH_SA_EMAIL \}\}/)
   assert.match(text, /\$\{\{ secrets\.GOOGLE_CREDENTIALS \}\}/)
@@ -145,7 +140,7 @@ test('the embedded workflow YAML is emitted verbatim, not escaped', () => {
 })
 
 test('the workflow deploys with the official action, not a hand-rolled call', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /Nortezh\/nortezh-action@v[\d.]+/)
   assert.match(text, /SA_AUTH_EMAIL: \$\{\{ secrets\.NORTEZH_SA_EMAIL \}\}/)
   assert.match(text, /SA_AUTH_KEY: \$\{\{ secrets\.NORTEZH_SA_KEY \}\}/)
@@ -156,7 +151,7 @@ test('the workflow deploys with the official action, not a hand-rolled call', ()
 test('the image tag is computed once and passed between jobs', () => {
   // Writing the registry path in both the build tag and the deploy input is how the two
   // silently drift and a deploy points at an image that was never pushed.
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /image_name: \$\{\{ steps\.image\.outputs\.image_name \}\}/)
   assert.match(text, /image: \$\{\{ needs\.build\.outputs\.image_name \}\}/)
 })
@@ -164,7 +159,7 @@ test('the image tag is computed once and passed between jobs', () => {
 test('the service account setup comes before the GitHub secrets', () => {
   // Ordering matters: the secrets cannot be set until the key exists, and the workflow
   // must not be written until both are done.
-  const text = deployStack!.render({})
+  const text = guidance
   const account = text.indexOf('A Nortezh service account')
   const secrets = text.indexOf('Three GitHub secrets')
   const workflow = text.indexOf('### Then write')
@@ -172,15 +167,15 @@ test('the service account setup comes before the GitHub secrets', () => {
 })
 
 test('the prompt does not promise tools that are deliberately excluded', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   // serviceaccount* and cicd* are not exposed; the prompt must hand those steps to the
-  // user rather than instruct the model to call them.
+  // user rather than instruct the resource model to call them.
   assert.equal(/`serviceaccount[A-Z]/.test(text), false)
   assert.equal(/`cicd[A-Z]/.test(text), false)
 })
 
 test('it routes on intent instead of assuming a build-from-scratch', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Patch an existing deployment/)
   assert.match(flat, /Creating a resource that already exists is a failure, not a step/)
   assert.match(flat, /Take inventory before proposing anything/)
@@ -189,20 +184,20 @@ test('it routes on intent instead of assuming a build-from-scratch', () => {
 test('the destructive env-replacement footgun is called out', () => {
   // deployment.go:1076 — `if p.Env != nil { env = p.Env }` replaces the whole inline map.
   // Recommending `env` for a one-key patch would silently delete every other variable.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /replaces the entire inline env map/)
   assert.match(flat, /use `addEnv` \(upsert\) and `removeEnv` \(delete\)/)
 })
 
 test('it says an env group edit needs a redeploy to take effect', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /baked into the revision at deploy time/)
 })
 
 test('it reads the codebase before interrogating the user', () => {
   // The repo already states the topology, ports, dependencies and env vars. Asking a user
   // to recite their own architecture is both slower and less accurate than deriving it.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Understand the project, its services, and their configuration/)
   assert.match(flat, /This is the step that matters/)
   assert.match(flat, /docker-compose\.yml/)
@@ -214,7 +209,7 @@ test('it reads the codebase before interrogating the user', () => {
 
 test('every question must carry choices and a free-text escape', () => {
   // Options without an escape force the user to accept an answer that is merely close.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /always ask with choices/)
   assert.match(flat, /2–4 concrete options/)
   assert.match(flat, /A final option that is free text\*\*, always/)
@@ -225,12 +220,12 @@ test('every question must carry choices and a free-text escape', () => {
 })
 
 test('existing resources are offered ahead of creating new ones', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /existing resources come first, before any "create a new one" option/)
 })
 
 test('a project is described as holding many deployments and databases', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /A Nortezh \*\*project\*\* is not one application/)
   assert.match(flat, /one project with three deployments/)
   assert.match(flat, /Most names are unique \*\*within\*\* the project/)
@@ -239,7 +234,7 @@ test('a project is described as holding many deployments and databases', () => {
 })
 
 test('per-service configuration is treated as its own step', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Every environment variable it reads/)
   assert.match(flat, /Which of those are secrets/)
   assert.match(flat, /Which are shared and which are per-service/)
@@ -253,7 +248,7 @@ test('the domain cdn flag is asked about, with its real gating', () => {
   // domain.go:116 — cdn defaults to false; cdn=true is billing-feature-gated and rejected
   // outright for a trial account. Silently sending true fails for reasons that read like
   // a permissions bug.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`cdn: false` \(\*\*the default\*\*, recommend it\)/)
   assert.match(flat, /DOMAIN_TRIAL_BILLING_CANNOT_CREATE_CDN_DOMAIN/)
 })
@@ -261,7 +256,7 @@ test('the domain cdn flag is asked about, with its real gating', () => {
 test('the cname is read from domainGet, not written from memory', () => {
   // domain.go:433 — Get branches on x.CDN: a CDN domain gets cname.nortezh.com, a non-CDN
   // domain gets its own cluster's cname. One hardcoded hostname breaks half the cases.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /cname value differs by the `cdn` flag/)
   assert.match(flat, /always read it, never write one from memory/)
 })
@@ -272,7 +267,7 @@ test('who terminates TLS follows the cdn flag, not a fixed answer', () => {
   // cdn=false domain the customer's Cloudflare proxy IS what terminates TLS publicly —
   // grey cloud leaves the site unreachable, and Full (strict) rejects the origin with 526.
   // The prompt previously said grey cloud always, and named Full (strict) as the fix.
-  const text = deployStack!.render({})
+  const text = guidance
   const flat = text.replace(/\s+/g, ' ')
   assert.match(flat, /Who terminates TLS depends on `cdn`/)
   assert.match(text, /cdn=false {3}customer's Cloudflare must PROXY \(orange cloud\)/)
@@ -288,7 +283,7 @@ test('the workflow does not pass pull_secret to nortezh-action', () => {
   // Observed in CI: nortezh-action@v1.2.0 logs "Unexpected input(s) 'pull_secret'" and
   // ignores it. The deployment already stores pullSecret from its create, and an omitted
   // field is preserved on a revision.
-  const text = deployStack!.render({})
+  const text = guidance
   assert.equal(/^\s+pull_secret:/m.test(text), false, 'pull_secret is still in the template')
   const flat = text.replace(/\s+/g, ' ')
   assert.match(flat, /Do not add a `pull_secret` input/)
@@ -303,7 +298,7 @@ test('the workflow does not pass pull_secret to nortezh-action', () => {
 test('manual steps are handed over short, then waited on', () => {
   // Front-loading the explanation buries the instruction. The rule is: say what to do,
   // give the exact values, stop, and keep the reasoning for when it is actually needed.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Some steps are theirs, not yours/)
   assert.match(flat, /as a short numbered list\. Three or four steps, not a page/)
   assert.match(flat, /Leave the explanation out/)
@@ -312,7 +307,7 @@ test('manual steps are handed over short, then waited on', () => {
 })
 
 test('the long-form detail is parked behind "keep in reserve"', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   const reserves = [...text.matchAll(/Keep in reserve/g)]
   assert.ok(reserves.length >= 2, 'expected the DNS and credential handoffs to both defer detail')
 })
@@ -320,7 +315,7 @@ test('the long-form detail is parked behind "keep in reserve"', () => {
 test('route target is documented as a deployment:// URI, not a bare name', () => {
   // route.go:42-44 allows exactly one prefix and route.go:621 rejects anything else, so
   // `target: "api"` fails with "target is invalid". Easy to get wrong from the field name.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`target` is a URI, not a name/)
   assert.match(flat, /deployment:\/\/<name>/)
   assert.match(flat, /`path` must start with `\/`/)
@@ -330,7 +325,7 @@ test('projectCreate is described as possible, with where billingId comes from', 
   // An earlier version claimed no exposed tool returns a billingId, so project creation was
   // impossible. False: project.go:302 puts billingId on GetResult, and both projectGet and
   // projectOverview are exposed. The real constraint is only the very first project.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`projectGet` or `projectOverview` returns/)
   assert.match(flat, /never invent the UUID/)
   assert.equal(/You cannot create a project/.test(flat), false)
@@ -338,7 +333,7 @@ test('projectCreate is described as possible, with where billingId comes from', 
 
 test('metric ranges are enumerated, since the schema does not', () => {
   // deployment.go:2055 — a closed set. "1d"/"7d"/"30d" look right and all fail.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`1hagg`/)
   assert.match(flat, /`30dagg`/)
 })
@@ -346,7 +341,7 @@ test('metric ranges are enumerated, since the schema does not', () => {
 test('secrets are kept out of env groups', () => {
   // envgroup.go:151-155 — "stored and returned as PLAIN TEXT (never masked) — do not put
   // real secrets in an env group". Only mountDataSecretPaths censors (deployment.go:911).
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Only `mountDataSecretPaths` masks anything/)
   assert.match(flat, /do not put real secrets in an env group/)
   assert.match(flat, /mountData` \+ `mountDataSecretPaths`/)
@@ -357,7 +352,7 @@ test('secrets are kept out of env groups', () => {
 test('envgroupUpdate is described as a wholesale replace', () => {
   // envgroup.go:141-143 — Data replaces the whole map; any key left out is removed, and a
   // nil data empties the group outright (Valid() substitutes an empty map).
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`envgroupUpdate` REPLACES the whole map/)
   assert.match(flat, /omitting `data` entirely empties the group/)
   assert.match(flat, /Read with `envgroupGet`, change, send it all back/)
@@ -366,27 +361,14 @@ test('envgroupUpdate is described as a wholesale replace', () => {
 test('absent envGroups and empty envGroups are distinguished', () => {
   // deployment.go:370-372 — nil leaves the links unchanged, [] clears them. Sending [] to
   // mean "unchanged" strips the deployment's entire shared configuration.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /`envGroups` absent means \*\*leave links alone\*\*/)
   assert.match(flat, /`\[\]` means \*\*unlink every group\*\*/)
 })
 
-test('$-sequences in argument values cannot splice the template', () => {
-  // String.replace interprets $&, $`, $' and $n in a replacement STRING. A project name
-  // containing one re-injected the {{GIVEN}} token, or spliced 83 characters of the
-  // template's own prefix into the rendered prompt.
-  const amp = deployStack!.render({ project: 'acme$&x' })
-  assert.equal(amp.includes('{{GIVEN}}'), false)
-  assert.match(amp, /- project: acme\$&x/)
-
-  const tick = deployStack!.render({ project: "acme$`END" })
-  assert.match(tick, /- project: acme\$`END/)
-  assert.equal(tick.length, deployStack!.render({ project: 'acme$`END' }).length)
-})
-
 test('deploymentDeploy is not described as send-only-what-changes', () => {
   // deployment.go:399 — image is required on every call, alongside project/location/name.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Always required, even on a one-field change/)
   assert.match(flat, /read the current image with `deploymentGet` and send it back/)
   assert.equal(/send \*\*only what changes\*\*/.test(flat), false)
@@ -395,7 +377,7 @@ test('deploymentDeploy is not described as send-only-what-changes', () => {
 test('type is documented as immutable after creation', () => {
   // updateDeployment has no b.Set("type"), so the placeholder recipe must set the real
   // type at create time or a Worker can never stop being a WebService.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /cannot be changed at all:\*\* `type`/)
   // It is the one field a later CI deploy cannot correct, so it has to be right at create
   // even though the image it points at does not exist yet.
@@ -403,50 +385,48 @@ test('type is documented as immutable after creation', () => {
   })
 
 test('omitting mountDataSecretPaths is flagged as destructive', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /deletes the stored value of every secret-marked mounted file/)
 })
 
 test('a non-CDN domain is not described as needing verification', () => {
   // domain.go:116-126 — inserted StatusSuccess with verification '{}'.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /written `success` at create/)
   assert.match(flat, /no verification at all/)
   assert.match(flat, /`ipv4` and `ipv6` are always empty/)
 })
 
 test('protocol is limited to http and https for a WebService', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /a `WebService` accepts only \*\*`http` or `https`\*\*/)
 })
 
 test('the database engines are not treated as returning the same fields', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /\*\*no `user`, no `database`\*\*/)
   assert.match(flat, /cpu \*\*0\.5–4\*\* cores/)
 })
 
 test('rollback is not promised as a clean undo', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /does \*\*not\*\* create a new revision/)
   assert.match(flat, /partial undo, not a time machine/)
 })
 
 test('route readiness appears in the convergence table', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /\| route \| `routeGet` \|/)
 })
 
-const resources = PROMPTS.find((prompt) => prompt.name === 'resources')
-
-test('the resource model prompt exists and takes no arguments', () => {
-  assert.ok(resources !== undefined)
-  assert.deepEqual(resources.arguments, [])
-  assert.ok(resources.render({}).length > 5000)
+test('the resource model is substantial enough to be worth loading separately', () => {
+  // It is a separate skill so an ordinary question costs ~4k instead of the whole procedure.
+  // If it shrank to a stub that split would be pure overhead.
+  assert.ok(RESOURCE_MODEL.length > 5000)
 })
 
 test('the resource model covers every exposed resource', () => {
-  const text = resources!.render({})
+  const text = RESOURCE_MODEL
   for (const heading of [
     '## Project', '## Cluster', '## Deployment', '## Revision', '## Env group',
     '## Disk', '## Managed database', '## Pull secret', '## Domain', '## Route',
@@ -456,35 +436,35 @@ test('the resource model covers every exposed resource', () => {
 })
 
 test('each resource states dependencies, readiness and mutability', () => {
-  const text = resources!.render({})
+  const text = RESOURCE_MODEL
   assert.ok(text.split('**Depends on:**').length - 1 >= 7, 'dependencies')
   assert.ok(text.split('**Ready:**').length - 1 >= 8, 'readiness')
   assert.ok(text.split('**Mutable:**').length - 1 >= 6, 'mutability')
 })
 
 test('the resource model does not contradict deploy-stack on the sharp facts', () => {
-  const model = resources!.render({}).replace(/\s+/g, ' ')
-  // Each of these was a confirmed error in deploy-stack at some point; the model must
+  const model = RESOURCE_MODEL.replace(/\s+/g, ' ')
+  // Each of these was a confirmed error in deploy-stack at some point; the resource model must
   // state the corrected version, or the two prompts will disagree in the same session.
-  assert.match(model, /Immutable: `type`/)
-  assert.match(model, /non-CDN\*\* domain is written `success` at create/)
-  assert.match(model, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
-  assert.match(model, /replaces the whole map/)
-  assert.match(model, /do not put real secrets in one/)
-  assert.match(model, /any number of deployments — a disk is \*\*not exclusive\*\*/)
-  assert.match(model, /`projectGet` or `projectOverview`/)
+  assert.match(RESOURCE_MODEL, /Immutable: `type`/)
+  assert.match(RESOURCE_MODEL, /non-CDN\*\* domain is written `success` at create/)
+  assert.match(RESOURCE_MODEL, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
+  assert.match(RESOURCE_MODEL, /replaces the whole map/)
+  assert.match(RESOURCE_MODEL, /do not put real secrets in one/)
+  assert.match(RESOURCE_MODEL, /any number of deployments — a disk is \*\*not exclusive\*\*/)
+  assert.match(RESOURCE_MODEL, /`projectGet` or `projectOverview`/)
 })
 
 test('deploy-stack INLINES the resource model rather than pointing at it', () => {
   // An MCP prompt cannot fetch another prompt: prompts are user-invoked slash commands and
-  // the model has no prompts/get. A pointer would be advice it could never act on.
-  const text = deployStack!.render({})
-  assert.ok(text.includes(resources!.render({})), 'the model is not embedded verbatim')
+  // the resource model has no prompts/get. A pointer would be advice it could never act on.
+  const text = guidance
+  assert.ok(text.includes(RESOURCE_MODEL), 'the resource model is not embedded verbatim')
   assert.equal(text.includes('{{RESOURCE_MODEL}}'), false)
 })
 
 // Facts that were wrong in deploy-stack at some point and are now stated in the resource
-// model. The model is canonical: if a fact leaves it, the procedure is the only place it
+// RESOURCE_MODEL. The RESOURCE_MODEL is canonical: if a fact leaves it, the procedure is the only place it
 // lives and the next edit can contradict it silently — which is exactly how the original
 // twelve errors survived review.
 const CANONICAL_FACTS: Array<[string, RegExp]> = [
@@ -506,15 +486,14 @@ const CANONICAL_FACTS: Array<[string, RegExp]> = [
 
 test('every sharp fact is stated in the resource model, not only in the procedure', () => {
   // Flattened: the source wraps at 90 columns, so a fact can straddle a line break.
-  const model = resources!.render({}).replace(/\s+/g, ' ')
+  const model = RESOURCE_MODEL.replace(/\s+/g, ' ')
   for (const [name, pattern] of CANONICAL_FACTS) {
-    assert.match(model, pattern, `the model no longer states: ${name}`)
+    assert.match(model, pattern, `the resource model no longer states: ${name}`)
   }
 })
 
-test('every resource in the model answers the same questions', () => {
-  const model = resources!.render({})
-  const sections = model.split(/\n## /).slice(1)
+test('every resource in the resource model answers the same questions', () => {
+  const sections = RESOURCE_MODEL.split(/\n## /).slice(1)
   const resourceSections = sections.filter(
     (s) => !/^(The dependency graph|Things that are true)/.test(s),
   )
@@ -549,7 +528,7 @@ const STEPS = [
 ]
 
 test('the seven steps appear once each, in order', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   let previous = -1
   for (const step of STEPS) {
     const at = text.indexOf(step)
@@ -562,7 +541,7 @@ test('the seven steps appear once each, in order', () => {
 test('the project question is unconditional and comes before the work', () => {
   // The slug rides on every later call. Guessing it builds a correct stack in the wrong
   // tenancy — and the request naming a project is not the same as the user confirming it.
-  const text = deployStack!.render({})
+  const text = guidance
   const flat = text.replace(/\s+/g, ' ')
   assert.match(flat, /\*\*Always ask, every run, before anything else\.\*\*/)
   assert.match(flat, /Nothing else happens until this is answered/)
@@ -571,15 +550,15 @@ test('the project question is unconditional and comes before the work', () => {
 
 test('the loop will not exit while anything is unresolved', () => {
   // "probably 8080" is how a plan acquires a value nobody chose. The exit condition has to
-  // be stated as absolute, or the model satisfies it by lowering its own bar.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  // be stated as absolute, or the resource model satisfies it by lowering its own bar.
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /no unknowns, no assumptions, no guesses/)
   assert.match(flat, /If you cannot cite where a value came from/)
   assert.match(flat, /It is a loop, not a sequence/)
 })
 
 test('step 5 is a hard gate that read-only tools alone may precede', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /\*\*Steps 1 to 5 change nothing\*\* — read-only tools only/)
   assert.match(flat, /you may call read-only tools and nothing else/)
   assert.match(flat, /Silence is not approval/)
@@ -589,7 +568,7 @@ test('step 5 is a hard gate that read-only tools alone may precede', () => {
 })
 
 test('the plan template carries a section per resource kind', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   const start = text.indexOf('### The plan template')
   const end = text.indexOf('### End of the plan template')
   assert.ok(start > 0 && end > start, 'the plan template is not delimited')
@@ -615,7 +594,7 @@ test('the plan template carries a section per resource kind', () => {
 })
 
 test('the report template is built from what ran, not from the plan', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   const start = text.indexOf('### The report template')
   const end = text.indexOf('### End of the report template')
   assert.ok(start > 0 && end > start, 'the report template is not delimited')
@@ -635,17 +614,17 @@ test('the report template is built from what ran, not from the plan', () => {
 test('red is not overloaded between deletion and failure', () => {
   // 🔴 already means delete. Reusing it for a failed step would make "deleted" and "broke"
   // the same colour in a report whose whole job is telling them apart.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Red already means \*delete\*/)
   assert.match(flat, /❌ failed/)
   assert.match(flat, /⏸ not run/)
 })
 
 test('output formatting forbids pipe tables without forbidding its own', () => {
-  // The prompt itself uses pipe tables as reference material for the model. The rule is
+  // The prompt itself uses pipe tables as reference material for the resource model. The rule is
   // about what reaches the user's terminal, where a pipe table has no renderer — so the
   // rule has to scope itself or it reads as self-contradictory.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Never use a markdown pipe table in output/)
   assert.match(flat, /The tables in this prompt are reference material for you/)
   assert.match(flat, /Every listing is its own fenced block/)
@@ -654,7 +633,7 @@ test('output formatting forbids pipe tables without forbidding its own', () => {
 test('chips are kept out of the diagram, which uses the sign markers', () => {
   // Emoji are double-width in most terminals and single-width in some, so one inside a box
   // breaks the box. The two notations have to mean the same four things.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /🟢 add · 🟡 edit · 🔴 delete · ⚪ untouched/)
   assert.match(flat, /\*\*No chips inside the diagram\*\*/)
   assert.match(flat, /The chip is the first character of the line/)
@@ -664,25 +643,25 @@ test('chips are kept out of the diagram, which uses the sign markers', () => {
 // Contradiction tests.
 //
 // Every test above checks that a fact is STATED somewhere. That is what let four errors
-// survive the last review: the model was corrected and the procedure kept the old claim, so
-// the same prompt asserted both. These check the procedure does not contradict the model.
+// survive the last review: the resource model was corrected and the procedure kept the old claim, so
+// the same prompt asserted both. These check the procedure does not contradict the resource model.
 // ---------------------------------------------------------------------------------------
 
 test('the rules do not deny the flow they sit above', () => {
   // Rule 3 used to open "There is no fixed sequence", written when the prompt was a menu.
   // With Steps 1-7 in place that reads as permission to skip the approval gate — the two
   // strongest instructions in the prompt, contradicting each other on page one.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/There is no fixed sequence/.test(flat), false)
   assert.match(flat, /The seven steps are fixed; the operations inside them are not/)
   assert.match(flat, /Never work through 6\.1–6\.5 because they are numbered/)
 })
 
-test('the procedure agrees with the model on which resources can fail', () => {
+test('the procedure agrees with the resource model on which resources can fail', () => {
   // domain/status.go declares StatusError and domain.go:209 enums it as a string. Saying
-  // "only the deployment can fail" made the model treat a domain stuck in `error` as a
+  // "only the deployment can fail" made the resource model treat a domain stuck in `error` as a
   // domain still converging, and wait on something that will never change.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/only the deployment can fail/i.test(flat), false)
   assert.equal(/Only the deployment reports a string/i.test(flat), false)
   assert.match(flat, /the same two can fail: deployment and domain/)
@@ -694,7 +673,7 @@ test('the procedure does not present DISK_IN_USE as protection', () => {
   // reads the `disk` column, and disk.delete refuses only when that list is non-empty. B1
   // used to say "diskDelete fails with DISK_IN_USE while any still does" — which reads as a
   // guarantee and licenses deleting a mounted volume.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/`diskDelete` fails with `DISK_IN_USE` while any still does/.test(flat), false)
   assert.match(flat, /neither `diskGet` nor `DISK_IN_USE` will tell you about most of them/)
   assert.match(flat, /check its `disk` field yourself/)
@@ -704,7 +683,7 @@ test('the ground rules do not license sending only the changed fields', () => {
   // deployment.go:399 requires image on every call, and an omitted mountDataSecretPaths
   // wipes secret file values — so "send the fields that differ and nothing else" is the
   // data-loss path, stated as a rule.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/send the fields that differ and nothing else/.test(flat), false)
   assert.match(flat, /is \*\*not\*\* safe here/)
 })
@@ -712,7 +691,7 @@ test('the ground rules do not license sending only the changed fields', () => {
 test('every destructive tool is named in the confirm-first rule', () => {
   // Derived from the generated annotations rather than a hand-written list, so adding a
   // destructive route to the allowlist fails here until the prompt mentions it.
-  const text = deployStack!.render({})
+  const text = guidance
   for (const tool of TOOLS.filter((candidate) => candidate.destructive)) {
     // The three engine deletes are covered by one `db*Delete` wildcard.
     const needle = /^db[A-Z]/.test(tool.name) ? 'db*Delete' : tool.name
@@ -722,7 +701,7 @@ test('every destructive tool is named in the confirm-first rule', () => {
 
 // SCREAMING_SNAKE tokens in the prompt that are environment variables or secret names, not
 // API error codes. Everything else in that shape is checked against what the tools can
-// actually return — a code the model is told to react to but no route emits is advice it
+// actually return — a code the resource model is told to react to but no route emits is advice it
 // can never use, and it reads exactly like a real one.
 const NOT_ERROR_CODES = new Set([
   'EXPOSE',
@@ -744,7 +723,7 @@ const NOT_ERROR_CODES = new Set([
 
 test('every error code the prompts cite is one an exposed tool can return', () => {
   const returnable = new Set(TOOLS.flatMap((tool) => tool.errorCodes))
-  const text = PROMPTS.map((prompt) => prompt.render({})).join('\n')
+  const text = guidance
 
   const cited = new Set(
     [...text.matchAll(/`([A-Z][A-Z0-9_]{4,})`/g)]
@@ -756,7 +735,7 @@ test('every error code the prompts cite is one an exposed tool can return', () =
   for (const code of cited) {
     assert.ok(
       returnable.has(code),
-      `the prompts tell the model to expect ${code}, which no exposed tool declares in ` +
+      `the prompts tell the resource model to expect ${code}, which no exposed tool declares in ` +
         'x-error-codes. Either it is not a real code, or it belongs to a route that is not ' +
         'in the allowlist. (If it is an env var, add it to NOT_ERROR_CODES.)',
     )
@@ -765,15 +744,15 @@ test('every error code the prompts cite is one an exposed tool can return', () =
 
 test('deploymentGet.url is not described as always working', () => {
   // An external ingress exists only for a non-internal WebService, but `url` is populated
-  // for every type — so "every deployment already has a working URL" sent the model off to
+  // for every type — so "every deployment already has a working URL" sent the resource model off to
   // verify a Worker over HTTP.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/Every deployment already has a working URL/.test(flat), false)
   assert.match(flat, /it only \*resolves\* for a \*\*non-internal WebService\*\*/)
 })
 
 test('the rules heading counts the rules that are actually there', () => {
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /## The six rules that matter most/)
   assert.match(text, /\*\*6\. /)
   assert.equal(/\n\*\*7\. /.test(text), false)
@@ -782,18 +761,18 @@ test('the rules heading counts the rules that are actually there', () => {
 
 test('the image route is stated as a procedure, not as a prohibition', () => {
   // Stated as "do not run docker build", the rule is a blocklist: it cannot enumerate
-  // podman, nerdctl, a Makefile target, or whatever comes next, and it leaves the model
+  // podman, nerdctl, a Makefile target, or whatever comes next, and it leaves the resource model
   // without an alternative so it improvises. Stating the one route that works covers every
   // tool including the ones nobody has written yet.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Images reach Nortezh one way: CI builds and pushes, then updates the deployment/)
   assert.match(flat, /the \*\*full real config\*\*/)
   assert.match(flat, /That workflow builds the image, pushes it, and sets the real tag on the deployment/)
   assert.match(flat, /"Already exists" means already pushed/)
-  // Observed for real on build 13: the model built linux/amd64 locally and pushed to GHCR
+  // Observed for real on build 13: the resource model built linux/amd64 locally and pushed to GHCR
   // with the laptop's docker credential. The rule's justification had been "an image on
   // your machine cannot be deployed", which is simply false — push it and the cluster pulls
-  // it. A reason the model can disprove invites the workaround it is meant to stop.
+  // it. A reason the resource model can disprove invites the workaround it is meant to stop.
   assert.match(flat, /Not \*"it would not work"\* — it would/)
   assert.match(flat, /unreviewed and unreproducible/)
   assert.match(flat, /needs a \*\*write\*\* credential that rule 6 keeps out of this session/)
@@ -808,7 +787,7 @@ test('credentials are governed by one positive invariant, not a blocklist', () =
   // "Never create a pull secret" plus "never ask for one" plus "never run gh auth token"
   // plus "never read ~/.docker/config.json" is a list that can never be finished. "You work
   // in names, never values" covers all of them, and the credentials nobody has invented yet.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Every credential travels one path: the user creates it, and tells you only its name/)
   assert.match(flat, /You work in \*\*names\*\*, never values/)
   // Each credential says where the user makes it and what comes back.
@@ -835,11 +814,11 @@ test('credentials are governed by one positive invariant, not a blocklist', () =
 })
 
 test('a withheld tool is never resolved by making something public', () => {
-  // Observed for real: with pullsecretCreate gone, a model concluded "make the GHCR package
+  // Observed for real: with pullsecretCreate gone, a RESOURCE_MODEL concluded "make the GHCR package
   // public after first push, so no pull secret is needed". Removing a capability creates
   // pressure to route around it, and publishing is the cheapest route — it trades a console
   // step for permanently exposing every layer, build arg and baked-in file of the image.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Blocked is not a reason to weaken something else/)
   assert.match(flat, /Registries are private by default and stay that way/)
   assert.match(flat, /Never remove the thing that made it require permission/)
@@ -852,8 +831,8 @@ test('a withheld tool is never resolved by making something public', () => {
 test('the CI push credential is created by the user, in GitHub Secrets', () => {
   // Push (Actions, write) and pull (cluster, read) are different credentials with different
   // scopes, and conflating them is the common mistake. Neither passes through the chat: the
-  // user pastes the value into GitHub Secrets and tells the model only the name.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  // user pastes the value into GitHub Secrets and tells the resource model only the name.
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /\*\*2\. A push credential for the registry\.\*\*/)
   assert.match(flat, /straight into GitHub Secrets, never through you/)
   assert.match(flat, /Paste each value straight in — do not send them to me/)
@@ -865,7 +844,7 @@ test('the registry login style is asked, not inferred from the registry', () => 
   // Artifact Registry does both: oauth2accesstoken via google-github-actions/auth, or
   // _json_key as an ordinary username/password. GHCR does both too. Picking from the
   // registry name alone silently makes a security decision the user never saw.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /How the build job logs in is a choice, not a property of the registry/)
   assert.match(flat, /\*\*OAuth2 — a short-lived token minted during the run\.\*\*/)
   assert.match(flat, /\*\*Username and password \(or token\)\.\*\*/)
@@ -877,7 +856,7 @@ test('the registry login style is asked, not inferred from the registry', () => 
 test('the workflow variants swap only the login step', () => {
   // The deploy job authenticates to Nortezh, not the registry, so it is identical across
   // every option. Saying "adapt it" invites rewriting the parts that must not change.
-  const text = deployStack!.render({})
+  const text = guidance
   const flat = text.replace(/\s+/g, ' ')
   assert.match(flat, /\*\*Only the login changes between options\.\*\*/)
   assert.match(text, /username: \$\{\{ github\.actor \}\}/)
@@ -895,11 +874,11 @@ test('the workflow variants swap only the login step', () => {
 })
 
 test('the credential question is which secret to use, not how to obtain one', () => {
-  // Observed for real, from a stale build: the model offered "I'll paste user + token" and
+  // Observed for real, from a stale build: the resource model offered "I'll paste user + token" and
   // "reuse local docker login" as menu options. That is rule 1 faithfully generating a list
   // of rule 6 violations — nothing said the options had to be things it may do. A menu
   // reads as "I will do whichever you pick", so listing it is offering it.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Offer only what you can actually do/)
   assert.match(flat, /the question is never \*how should I get your secret\*/)
   assert.match(flat, /\*\*"which pull secret should I use\?"\*\*/)
@@ -912,7 +891,7 @@ test('the pull secret flow is drawn, including the reuse and public exits', () =
   // Same reason as the deployment flow: three actors, and two branches that end the
   // procedure early. Written as prose the "one already exists, reuse it" path is the one
   // that gets skipped, and a second secret gets requested for no reason.
-  const text = deployStack!.render({})
+  const text = guidance
   assert.match(text, /whose image is it\?/)
   assert.match(text, /someone else's, public ──▶ no pull secret\. done\./)
   assert.match(text, /one exists here ──▶ reuse its name/)
@@ -929,7 +908,7 @@ test('the pull secret handoff has reserve detail for other registries', () => {
   // somewhere to draw on. Without it, "a token with read:packages" is a dead end for the
   // registries that are not GHCR, and for the failures that look like a bad token but are
   // not.
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
+  const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /_json_key/)
   assert.match(flat, /Artifact Registry Reader/)
   assert.match(flat, /https:\/\/index\.docker\.io\/v1\//)
@@ -947,23 +926,11 @@ test('pullsecretCreate is not an exposed tool', () => {
   }
 })
 
-test('the model does not claim the API annotation contradicts it', () => {
+test('the resource model does not claim the API annotation contradicts it', () => {
   // nortezh-backend 13c1283 corrected revision.go's rollback annotation to say it rewinds.
-  // The parenthetical telling the model to distrust the generated tool description outlived
+  // The parenthetical telling the resource model to distrust the generated tool description outlived
   // the thing it described.
-  const model = resources!.render({}).replace(/\s+/g, ' ')
-  assert.equal(/the API's own annotation is wrong/.test(model), false)
+  const model = RESOURCE_MODEL.replace(/\s+/g, ' ')
+  assert.equal(/the API's own annotation is wrong/.test(RESOURCE_MODEL), false)
 })
 
-test('an argument value cannot expand the other placeholder', () => {
-  // Two chained replaces let the first substitution's OUTPUT become the second's subject,
-  // so an argument of literally "{{RESOURCE_MODEL}}" was expanded — splicing the whole
-  // reference into the user-said block and leaving the real placeholder unfilled.
-  const rendered = deployStack!.render({ project: '{{RESOURCE_MODEL}}' })
-  assert.match(rendered, /- project: \{\{RESOURCE_MODEL\}\}/)
-  assert.equal(rendered.split(resources!.render({})).length, 2, 'the model must appear exactly once')
-
-  // And the reverse ordering.
-  const other = deployStack!.render({ project: '{{GIVEN}}' })
-  assert.match(other, /- project: \{\{GIVEN\}\}/)
-})

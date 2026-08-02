@@ -1,0 +1,13 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "nortezh",
+  "version": "0.1.0",
+  "description": "Guidance for working on the Nortezh PaaS through the nortezh MCP server: the resource model, the deploy procedure, reporting and diagnosis.",
+  "author": {
+    "name": "Nortezh",
+    "url": "https://github.com/Nortezh/nortezh-mcp"
+  },
+  "skills": [
+    "./"
+  ]
+}

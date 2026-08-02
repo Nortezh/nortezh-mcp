@@ -1,5 +1,11 @@
 // `nortezh-mcp install-skill` — link the bundled skill into ~/.claude/skills.
 //
+// What gets linked is a Claude Code PLUGIN, not a lone skill. Landing it at
+// ~/.claude/skills/nortezh is what makes it auto-load as `nortezh@skills-dir` — no marketplace
+// and no `claude plugin install` — while its `skills/<name>/SKILL.md` files become
+// `nortezh:resources`, `nortezh:deployer`, `nortezh:reporter`, `nortezh:troubleshooter`.
+// The root SKILL.md stays an ordinary always-on skill and routes between them.
+//
 // Done explicitly rather than from an npm `postinstall`. A package writing into someone's
 // Claude configuration behind their back is invisible to uninstall and surprising when it is
 // found; one documented command costs a line in the README and can be reversed with `rm`.
@@ -62,6 +68,7 @@ export function installSkill(): void {
 
   symlinkSync(target, link, 'dir')
   console.error(`Installed: ${link} -> ${target}`)
+  console.error('Loads next session as nortezh@skills-dir; /reload-plugins loads it now.')
   console.error('Run this again after every update — on pnpm the link does not follow one.')
   console.error('Remove with: rm ~/.claude/skills/nortezh')
 }

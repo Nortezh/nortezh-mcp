@@ -19,11 +19,10 @@
     "prepare": "npm run build",
     "sync-spec": "tsx scripts/sync-spec.ts",
     "generate": "tsx scripts/generate.ts",
-    "build": "tsx scripts/generate.ts && tsx scripts/generate-skill.ts && tsc && tsx scripts/stamp.ts",
+    "build": "tsx scripts/generate.ts && tsc && tsx scripts/stamp.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json",
     "test": "tsx --test test/*.test.ts",
-    "check": "tsx scripts/check-generated.ts && tsx scripts/check-skill.ts && npm run typecheck && npm test",
-    "generate-skill": "tsx scripts/generate-skill.ts"
+    "check": "tsx scripts/check-generated.ts && npm run typecheck && npm test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0",
