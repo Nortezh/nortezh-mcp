@@ -109,7 +109,7 @@ src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
 src/local-tools.ts     serverInfo — the one tool answered in-process
-src/install-skill.ts   `install-skill` — symlink skills/nortezh into ~/.claude/skills
+src/install-plugin.ts  `install-plugin` — symlink skills/nortezh into ~/.claude/skills
 skills/nortezh/        the guidance: a Claude Code plugin, plain markdown, hand-authored
 src/index.ts           MCP server, stdio transport
 ```
@@ -164,7 +164,7 @@ drift apart.
 The router carries the invariants that must survive even if no capability is loaded — the same
 ones that govern Bash, which is why they live in the always-loaded file.
 
-Installed with `nortezh-mcp install-skill`, an explicit command rather than an npm
+Installed with `nortezh-mcp install-plugin`, an explicit command rather than an npm
 `postinstall`: a package writing into someone's Claude config unasked is invisible to
 uninstall.
 

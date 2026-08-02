@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "nortezh": {
+      "command": "nortezh-mcp"
+    }
+  }
+}

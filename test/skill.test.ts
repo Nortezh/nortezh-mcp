@@ -76,6 +76,16 @@ test('the plugin manifest is what makes the names namespace', () => {
   assert.equal(manifest.version, VERSION)
 })
 
+test('the plugin registers the server, so there is no separate mcp add step', () => {
+  // Shipping .mcp.json is what collapses the install to one command, and it is also what
+  // guarantees the tools and the guidance are the same build of the package.
+  const mcp = JSON.parse(read('.mcp.json')) as { mcpServers: Record<string, { command: string }> }
+  assert.deepEqual(Object.keys(mcp.mcpServers), ['nortezh'])
+  // The bin name from package.json, resolved on PATH — the global install is what puts it
+  // there, and it is the same install that provides this plugin.
+  assert.equal(mcp.mcpServers.nortezh?.command, 'nortezh-mcp')
+})
+
 test('the invariants survive even if no capability is loaded', () => {
   // The router is the only part guaranteed to be in context once the skill fires. The rules
   // that cannot be missed have to be in it, not only in the 15k procedure.

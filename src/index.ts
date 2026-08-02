@@ -24,7 +24,7 @@ import {
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
-import { installSkill } from './install-skill.js'
+import { installPlugin } from './install-plugin.js'
 import { LOCAL_TOOLS } from './local-tools.js'
 import { readBuildInfo, versionString, VERSION } from './version.js'
 
@@ -224,8 +224,10 @@ async function main(): Promise<void> {
     return
   }
 
-  if (command === 'install-skill') {
-    installSkill()
+  // `install-skill` kept as an alias: it is what the command was called for its first few
+  // releases, and it is in READMEs and shell history. It installs a plugin, hence the rename.
+  if (command === 'install-plugin' || command === 'install-skill') {
+    installPlugin()
     return
   }
 
@@ -250,7 +252,8 @@ async function main(): Promise<void> {
         '  nortezh-mcp            run the MCP server over stdio (what an MCP client starts)',
         '  nortezh-mcp login      sign in via the browser and store a token',
         '  nortezh-mcp logout     delete the stored token',
-        '  nortezh-mcp install-skill   link the bundled skill into ~/.claude/skills',
+        '  nortezh-mcp install-plugin  link the bundled plugin into ~/.claude/skills —',
+        '                         registers the MCP server AND the nortezh:* skills',
         '  nortezh-mcp version',
         '',
         'Environment:',

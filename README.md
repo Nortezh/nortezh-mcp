@@ -16,19 +16,41 @@ pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp
 # 2. sign in — opens your browser
 nortezh-mcp login
 
-# 3. add it to Claude Code
-claude mcp add nortezh --scope user -- nortezh-mcp
-
-# 4. install the skills (Claude Code only)
-nortezh-mcp install-skill
+# 3. add the plugin — this is what registers the tools AND the skills
+nortezh-mcp install-plugin
 ```
 
-**5. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
-`55` API routes.
+**4. Restart Claude Code** (or `/reload-plugins`), then check:
 
-The skills are what make Claude follow the rules when you just say *"deploy this to nortezh"*
-without typing a slash command. **Re-run step 4 after every update** — see
-[Updating](#updating).
+```bash
+claude plugin list                      # nortezh@skills-dir
+claude plugin details nortezh@skills-dir  # 4 skills, 1 MCP server, token cost
+```
+
+In a session, `call serverInfo` should report a version and `55` API routes.
+
+### Why there is no `claude mcp add`
+
+Step 3 links a Claude Code **plugin** into `~/.claude/skills/nortezh`. A directory there
+auto-loads as `nortezh@skills-dir`, and this one ships both `.mcp.json` (the server) and the
+`nortezh:*` skills — so one command does what `claude mcp add` plus a skill install used to.
+
+It is a symlink into the npm package, which is the point: the tools and the guidance can never
+be different builds. That is also why it is not `claude plugin install` — that installs from a
+marketplace, as a separate clone, free to drift from the binary it drives.
+
+**Re-run step 3 after every update** — see [Updating](#updating).
+
+<details>
+<summary>Upgrading from a manual <code>claude mcp add</code></summary>
+
+If you registered the server by hand before, remove it — otherwise you get two servers called
+`nortezh`:
+
+```bash
+claude mcp remove nortezh --scope user
+```
+</details>
 
 `--allow-build` is required because the package compiles itself at install time. Without it
 pnpm stops with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. On npm, drop the flag:
@@ -43,37 +65,40 @@ claude mcp add nortezh --scope user -- pnpm dlx --allow-build=nortezh-mcp github
 ```
 
 Always runs the latest `main`, but re-clones and recompiles on **every server start** —
-several seconds each time you open a session or reconnect, and no skill. Fine for trying it
-out; the global install is better for daily use.
+several seconds each time you open a session or reconnect. ⚠️ **And you get the 55 tools with
+no guidance at all**: the skills come from the plugin, which only the global install can link.
+Fine for a look around; not for deploying anything.
 </details>
 
 ## Updating
 
 ```bash
 pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp   # pull the latest
-nortezh-mcp install-skill                                        # re-point the skill
+nortezh-mcp install-plugin                                        # re-point the plugin
 ```
 
-Then reconnect from `/mcp` — the tool list is cached when a session connects.
+Then restart Claude Code, or `/reload-plugins` and reconnect from `/mcp` — both the tool list
+and the plugin are read when a session starts.
 
-`call serverInfo` tells you which build you are on. If it did not change, you did not
-reconnect.
+`call serverInfo` tells you which build you are on. If it did not change, you did not restart.
 
 > ⚠️ The second command is not optional **on pnpm**. pnpm installs each version into its own
-> content-addressed directory, so the skill symlink still points at the version you had
-> before — or at nothing. npm replaces the package in place, so there it flows through on its
-> own; re-running is harmless either way.
+> content-addressed directory, so the plugin symlink still points at the version you had
+> before — or at nothing, which takes the tools with it. npm replaces the package in place, so
+> there it flows through on its own; re-running is harmless either way.
 
 ## Uninstalling
 
 In this order — the first step needs the command to still exist.
 
 ```bash
-nortezh-mcp logout                    # delete the stored token
-rm ~/.claude/skills/nortezh           # the skill (a symlink; nothing else is touched)
-claude mcp remove nortezh --scope user
-pnpm rm -g nortezh-mcp                # npm rm -g nortezh-mcp
+nortezh-mcp logout           # delete the stored token
+rm ~/.claude/skills/nortezh  # the plugin — takes the skills and the server with it
+pnpm rm -g nortezh-mcp       # npm rm -g nortezh-mcp
 ```
+
+(If you ever ran `claude mcp add nortezh` by hand, `claude mcp remove nortezh --scope user`
+too.)
 
 That is everything it put on your machine. `logout` removes
 `~/.nortezh/credentials.json`; if you skip it the token sits there until it expires. Nothing

@@ -1,10 +1,17 @@
-// `nortezh-mcp install-skill` — link the bundled skill into ~/.claude/skills.
+// `nortezh-mcp install-plugin` — link the bundled plugin into ~/.claude/skills.
 //
 // What gets linked is a Claude Code PLUGIN, not a lone skill. Landing it at
 // ~/.claude/skills/nortezh is what makes it auto-load as `nortezh@skills-dir` — no marketplace
 // and no `claude plugin install` — while its `skills/<name>/SKILL.md` files become
 // `nortezh:resources`, `nortezh:deployer`, `nortezh:reporter`, `nortezh:troubleshooter`.
 // The root SKILL.md stays an ordinary always-on skill and routes between them.
+//
+// The plugin also carries `.mcp.json`, so this one command registers the SERVER as well and
+// there is no `claude mcp add` step. That is not just convenience: the tools and the guidance
+// then come from one directory, so they cannot be different builds of the package.
+//
+// ⚠️ It declares the server as `nortezh`, the same name `claude mcp add nortezh` would use.
+// Anyone who registered it by hand should remove that registration or end up with two.
 //
 // Done explicitly rather than from an npm `postinstall`. A package writing into someone's
 // Claude configuration behind their back is invisible to uninstall and surprising when it is
@@ -35,7 +42,7 @@ export function skillLinkPath(): string {
   return join(homedir(), '.claude', 'skills', 'nortezh')
 }
 
-export function installSkill(): void {
+export function installPlugin(): void {
   const target = bundledSkillPath()
   const link = skillLinkPath()
 
@@ -68,7 +75,12 @@ export function installSkill(): void {
 
   symlinkSync(target, link, 'dir')
   console.error(`Installed: ${link} -> ${target}`)
-  console.error('Loads next session as nortezh@skills-dir; /reload-plugins loads it now.')
+  console.error('This provides both the nortezh MCP server and the nortezh:* skills.')
+  console.error('Restart Claude Code to pick it up, or /reload-plugins in a running session.')
+  console.error('')
+  console.error('If you previously ran `claude mcp add nortezh`, remove it — otherwise you')
+  console.error('will have two servers by that name:  claude mcp remove nortezh --scope user')
+  console.error('')
   console.error('Run this again after every update — on pnpm the link does not follow one.')
   console.error('Remove with: rm ~/.claude/skills/nortezh')
 }
