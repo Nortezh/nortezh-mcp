@@ -10,17 +10,42 @@ Runs locally. Your token stays on your machine.
 Needs **Node 18+** and **git**.
 
 ```bash
-# 1. sign in — opens your browser
-npx -y github:Nortezh/nortezh-mcp login
+# 1. install
+npm i -g github:Nortezh/nortezh-mcp
 
-# 2. add it to Claude Code
+# 2. sign in — opens your browser
+nortezh-mcp login
+
+# 3. add it to Claude Code
+claude mcp add nortezh --scope user -- nortezh-mcp
+```
+
+**4. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
+`55` API routes.
+
+<details>
+<summary>Without installing (npx)</summary>
+
+```bash
+npx -y github:Nortezh/nortezh-mcp login
 claude mcp add nortezh --scope user -- npx -y github:Nortezh/nortezh-mcp
 ```
 
-**3. Check it worked** — in a session, ask `call serverInfo`. You should get a version and
-`55` API routes.
+Always runs the latest `main`, but re-clones and recompiles on **every server start** —
+about 5 seconds each time you open a session or reconnect. Fine for trying it out; the
+global install is better for daily use.
+</details>
 
-The first run compiles the server, so give it a few seconds.
+## Updating
+
+```bash
+npm i -g github:Nortezh/nortezh-mcp     # pull the latest
+```
+
+Then reconnect from `/mcp` — the tool list is cached when a session connects.
+
+`call serverInfo` tells you which build you are on. If it did not change, you did not
+reconnect.
 
 ## Login
 
@@ -30,7 +55,7 @@ The token goes from your browser straight to the process and is saved to
 - **Lasts 7 days.** You do not have to track it — when it expires the server reopens the
   browser once and retries the call.
 - Sign in again: rerun the `login` command.
-- Sign out: `npx -y github:Nortezh/nortezh-mcp logout`
+- Sign out: `nortezh-mcp logout`
 
 ## Use it
 
@@ -88,17 +113,13 @@ login times out after 5 minutes; just rerun it.
 Use the same name without `.internal`, over `https`.
 
 **`UNAUTHORIZED` that re-login does not fix.** The stored token was issued against a
-different API URL. `rm ~/.nortezh/credentials.json` and sign in again.
+different API URL. `nortezh-mcp logout`, then sign in again.
 
 **A change is not showing up.** The tool list is cached at connect time — reconnect from
-`/mcp`. `call serverInfo` shows which build you are on. To fetch a newer version:
+`/mcp`, then `call serverInfo` to confirm the build changed. See [Updating](#updating).
 
-```bash
-npx -y --ignore-existing github:Nortezh/nortezh-mcp version
-```
-
-**Nothing in `/mcp` at all.** Run `npx -y github:Nortezh/nortezh-mcp` by hand — startup
-errors go to stderr, which the client may hide.
+**Nothing in `/mcp` at all.** Run `nortezh-mcp` by hand — startup errors go to stderr,
+which the client may hide.
 
 ---
 
