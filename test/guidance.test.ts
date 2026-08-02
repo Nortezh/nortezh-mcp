@@ -28,14 +28,28 @@ const FIELD_NAMES = new Set(
 )
 
 test('readiness is described differently for deployments and for databases/disks', () => {
-  // The single most dangerous thing to get wrong here: api/deployment.ActionStatus
-  // marshals as a name and has "failed", while pkg/api.ActionStatus (databases, disks)
-  // ships as a bare integer 1/2 with no failure value. Treating them alike either moves
-  // on before a database exists or waits forever for a "failed" that cannot arrive.
+  // The single most dangerous thing to get wrong here: a deployment converges to `running`
+  // and can end up `failed`, while a database or disk only ever reaches `ready` and has no
+  // failure value at all. Treating them alike either moves on before a database exists or
+  // waits forever for a failure that cannot arrive.
+  //
+  // The wire encodings differ too — api/deployment.ActionStatus is a name, pkg/api's is a
+  // bare 1/2 — but src/humanize.ts normalizes both before the model sees them, so the
+  // guidance describes `state` rather than the raw fields. What must NOT come back is the
+  // idea that one integer means the same thing everywhere.
   const text = guidance
-  assert.match(text, /\*\*string\*\* `"success"`/)
-  assert.match(text, /\*\*number `2`\*\*/)
+  assert.match(text, /`state` is \*\*`running`\*\*/)
+  assert.match(text, /`state` is \*\*`ready`\*\*/)
   assert.match(text, /no failure value at all/)
+})
+
+test('the resource model says the server translates the API`s raw status encodings', () => {
+  // Without this the model reads the API docs, sees actionStatus and a bare 2, and reports
+  // a field that is not in the output — which is the confusion this replaced.
+  const flat = RESOURCE_MODEL.replace(/\s+/g, ' ')
+  assert.match(flat, /\*\*The MCP server translates all of it\*\*/)
+  assert.match(flat, /renames `actionStatus` to `status`/)
+  assert.match(flat, /`2` \*\*deploying\*\*/)
 })
 
 test('the first deploy is expected to fail, and that is stated as expected', () => {
@@ -58,10 +72,10 @@ test('the deployment flow is drawn, not only described', () => {
   // handoffs in their head; the diagram shows which of them is acting at each step.
   const text = guidance
   assert.match(text, /you {24}user {18}github actions/)
-  assert.match(text, /actionStatus "failed" {3}⚠️ EXPECTED — nothing to pull/)
+  assert.match(text, /state "failed" {10}⚠️ EXPECTED — nothing to pull/)
   assert.match(text, /push <registry>\/<path>:<sha>/)
   assert.match(text, /deployment\.create-revision/)
-  assert.match(text, /poll deploymentGet until actionStatus "success"/)
+  assert.match(text, /poll deploymentGet until state "running"/)
 })
 
 test('the pull secret must exist before CI pushes, not before the first deploy', () => {
@@ -501,7 +515,7 @@ test('every sharp fact is stated in the resource model, not only in the procedur
 test('every resource in the resource model answers the same questions', () => {
   const sections = RESOURCE_MODEL.split(/\n## /).slice(1)
   const resourceSections = sections.filter(
-    (s) => !/^(The dependency graph|Things that are true)/.test(s),
+    (s) => !/^(The dependency graph|How readiness is reported|Things that are true)/.test(s),
   )
   assert.ok(resourceSections.length >= 11, 'expected at least 11 resource sections')
 
@@ -670,8 +684,8 @@ test('the procedure agrees with the resource model on which resources can fail',
   const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/only the deployment can fail/i.test(flat), false)
   assert.equal(/Only the deployment reports a string/i.test(flat), false)
-  assert.match(flat, /the same two can fail: deployment and domain/)
-  assert.match(flat, /\| domain, CDN \| `domainGet` \| `status` is the \*\*string\*\* `"success"` \| yes/)
+  assert.match(flat, /Only two resources can fail: deployment and domain/)
+  assert.match(flat, /\| domain, CDN \| `domainGet` \| `state` is \*\*`ready`\*\* \(`status` `"success"`\) \| yes/)
 })
 
 test('the procedure does not present DISK_IN_USE as protection', () => {

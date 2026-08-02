@@ -23,11 +23,18 @@ import {
   TOKEN_ENV,
 } from './config.js'
 import { formatError, UNAUTHORIZED } from './envelope.js'
+import { humanize, outputNote } from './humanize.js'
 import { login } from './login.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
 import { install, uninstall } from './install.js'
 import { LOCAL_TOOLS } from './local-tools.js'
 import { readBuildInfo, versionString } from './version.js'
+
+/** A generated tool's description, plus what this server changes about its output. */
+function describe(tool: ToolSpec): string {
+  const note = outputNote(tool.name)
+  return note === undefined ? tool.description : `${tool.description}\n\n${note}`
+}
 
 async function runServer(): Promise<void> {
   const { apiUrl, token, fromEnv } = resolveAuth()
@@ -112,7 +119,11 @@ async function runServer(): Promise<void> {
     tools: [
       ...TOOLS.map((tool) => ({
         name: tool.name,
-        description: tool.description,
+        // The description comes from the backend's own annotations, so it names the API's
+        // fields — including `actionStatus`, which this server renames on the way out. The
+        // note reconciles the two; it is appended here rather than written into the
+        // generated file, which is regenerated from the spec and never hand-edited.
+        description: describe(tool),
         inputSchema: tool.inputSchema as { type: 'object' },
         annotations: {
           readOnlyHint: tool.readOnly,
@@ -179,7 +190,8 @@ async function runServer(): Promise<void> {
       // JSON.stringify(undefined) is undefined, not a string — that would serialize as a
       // content block with no `text`, which the MCP schema rejects, so an empty success
       // would reach the user as a protocol error.
-      const text = outcome.result === undefined ? 'null' : JSON.stringify(outcome.result, null, 2)
+      const readable = humanize(tool.name, outcome.result)
+      const text = readable === undefined ? 'null' : JSON.stringify(readable, null, 2)
       return { content: [{ type: 'text' as const, text }] }
     }
 

@@ -485,7 +485,7 @@ Unresolved: none.  ← if this is not empty, the plan is not ready
 
 ```
   config → worker → api → domain → ❗ you: DNS → route
-                 (each deployment polled until actionStatus "success")
+                 (each deployment polled until state "running")
 ```
 
 ## Steps only you can do
@@ -541,23 +541,31 @@ Every operation starts by checking whether the thing already exists.
 The model above gives this per resource; here it is as one table, because getting it wrong
 means either moving on too early or waiting forever.
 
+Every asynchronous resource answers with `status` (how far the deployer got) and `state`
+(what the thing **is**) — both words, never numbers. `state` is what you poll and what you
+quote.
+
 | resource | poll | ready when | can fail? |
 |---|---|---|---|
-| deployment | `deploymentGet` | `actionStatus` is the **string** `"success"` | yes — `"failed"` |
-| database | `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` | `actionStatus` is the **number `2`**, and `host` is non-empty | no |
-| disk | `diskGet` | `actionStatus` is the **number `2`** | no |
-| route | `routeGet` | `status` is the **number `2`** | no |
-| pull secret | `pullsecretGet` | `status` is the **number `2`** | no |
+| deployment | `deploymentGet` | `state` is **`running`** | yes — `state` `failed` |
+| database | `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` | `state` is **`ready`**, and `host` is non-empty | no |
+| disk | `diskGet` | `state` is **`ready`** | no |
+| route | `routeGet` | `state` is **`ready`** | no |
+| pull secret | `pullsecretGet` | `state` is **`ready`** | no |
 | domain, non-CDN | — | **immediately** — written `success` at create | no; nothing runs |
-| domain, CDN | `domainGet` | `status` is the **string** `"success"` | yes — `"error"` |
+| domain, CDN | `domainGet` | `state` is **`ready`** (`status` `"success"`) | yes — `status` `"error"` |
 | project, env group | — | **immediately** | no |
 
-⚠️ **Two resources report a string, and the same two can fail: deployment and domain.** A
-domain's `status` is one of `pending`, `success`, `error`, `verify` — `error` is a real
-outcome, not a placeholder. Database, disk, route and pull secret report a bare integer
-(`1` pending, `2` success) with **no failure value at all**, so one of those that goes wrong
-sits at `1` indefinitely — bound those waits to a few minutes and then tell the user, rather
-than looping.
+⚠️ **Only two resources can fail: deployment and domain.** A domain's `status` is one of
+`pending`, `success`, `error`, `verify` — `error` is a real outcome, not a placeholder.
+Database, disk, route and pull secret have **no failure value at all** (the API models them
+as `1` pending / `2` success and nothing else), so one of those that goes wrong sits at
+`state` `pending` indefinitely and no error ever arrives — bound those waits to a few
+minutes and then tell the user, rather than looping.
+
+The other deployment states are `deploying`, `pausing`, `paused`, `deleting` and `deleted`;
+they come from folding `action` together with `status`, so a deployment that is `paused` is
+not one that failed.
 
 Poll every few seconds, not faster.
 
@@ -779,7 +787,7 @@ rollback.
     type, port, env, resources        ← the real config, all of it
         │
         ▼
-    actionStatus "failed"   ⚠️ EXPECTED — nothing to pull.
+    state "failed"          ⚠️ EXPECTED — nothing to pull.
         │                      do not debug it, retry it, or swap
         │                      the image to make it go green
         ▼
@@ -793,7 +801,7 @@ rollback.
                                                    │
         ┌──────────────────────────────────────────┘
         ▼
-  poll deploymentGet until actionStatus "success"
+  poll deploymentGet until state "running"
         ⚠️ the only wait that means anything
 ```
 
@@ -1166,13 +1174,13 @@ Notes on that file, so you can adapt it rather than copy it blindly:
 
 **Stop and ask the user to commit and push.** You cannot push for them, and until that
 workflow runs there is no image at the tag 6.3 pointed the deployment at — which is why it
-is sitting `"failed"`.
+is sitting `failed`.
 
-Once they confirm the push, poll `deploymentGet` until `actionStatus` is `"success"` and
-report. That transition — `"failed"` to `"success"`, with no call from you in between — is
-the whole point of the flow, and it is the first moment anything has actually run.
+Once they confirm the push, poll `deploymentGet` until `state` is `running` and report. That
+transition — `failed` to `running`, with no call from you in between — is the whole point of
+the flow, and it is the first moment anything has actually run.
 
-⚠️ If it stays `"failed"` after CI reports success, the image was pushed but cannot be
+⚠️ If it stays `failed` after CI reports success, the image was pushed but cannot be
 pulled: check the pull secret exists in **that location** (6.2) and that the tag CI pushed
 matches what the deployment now names. Do not go back to changing the image by hand.
 
@@ -1188,8 +1196,8 @@ which is worse than no report at all, because the user stops checking.
 
 - **Every resource from the plan appears**, including the ones that did not run and the ones
   left untouched. A silent omission reads as success.
-- **State how you know**, not just what you claim: `actionStatus: "success"` for a
-  deployment, `2` for disk/database/route/pull secret, "synchronous" for a project or env
+- **State how you know**, not just what you claim: `state: running` for a deployment,
+  `state: ready` for disk/database/route/pull secret, "synchronous" for a project or env
   group. They genuinely differ, and citing the check is what makes the claim auditable.
 - **A failure carries its real error code**, what it means, and the one concrete next
   action. Never "it failed".
@@ -1233,8 +1241,8 @@ not reach a running deployment until it is redeployed.
 ## Deployments
 
 ```
-  🟢 worker · created · running · actionStatus "success"
-  ❌ api · patch failed · actionStatus "failed"
+  🟢 worker · created · state running
+  ❌ api · patch failed · state failed
 
   ❌ api — DEPLOYMENT_INVALID_CPU
       "0.75" is not in cluster rcf2's list: 0.5, 1, 2

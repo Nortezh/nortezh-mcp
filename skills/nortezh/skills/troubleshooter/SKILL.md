@@ -23,9 +23,9 @@ nothing on Nortezh is broken — the questions are whether the GitHub Actions ru
 whether it succeeded, and whether it set the real tag. Look there, not here.
 
 **2. Is it actually failed, or just pending?** Only **deployments** and **domains** can report
-failure. A disk, database, route or pull secret reports `1` = pending / `2` = success with
-**no failure value**, so a broken one sits at `1` forever and no error is ever produced.
-"Stuck at 1" means *look at what it depends on* — not *wait longer*.
+failure. A disk, database, route or pull secret has only `state` `pending` / `ready` — there
+is **no failure value**, so a broken one sits at `pending` forever and no error is produced.
+"Stuck at pending" means *look at what it depends on* — not *wait longer*.
 
 **3. Is a pull secret missing?** This one hides inside case 1. The pull secret must exist
 before **CI pushes**, not before the deployment is created — the create fails either way, so a
@@ -33,8 +33,9 @@ missing pull secret looks exactly like the expected failure, then resurfaces as 
 never ends. `pullsecretList` for that project and location. The user creates it; you only need
 its name.
 
-**4. What does the deployment itself say?** `deploymentGet` for `actionStatus` — the string
-`"success"` or `"failed"` — then `deploymentLogRevision` for the revision history.
+**4. What does the deployment itself say?** `deploymentGet` for `state` — `running`,
+`deploying`, `paused` or `failed` — then `deploymentLogRevision` for the revision history
+(each revision's own `status` is `pending`, `deploying` or `deployed`).
 ⚠️ A `statusUrl` is a **10-minute signed token**: refetch it, never reuse one from earlier in
 the conversation.
 

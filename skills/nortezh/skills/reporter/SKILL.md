@@ -33,10 +33,14 @@ session. The `*List` calls give you name, engine and host without it.
 Flattening every resource into "ok / not ok" invents a fact, because they do not agree on what
 those words mean:
 
-- **Deployment** — `actionStatus` is the **string** `"success"` or `"failed"`.
-- **Domain** — can report failure too.
-- **Disk, database, route, pull secret** — a bare integer, `1` = pending and `2` = success,
-  **with no failure value at all**. One of these sitting at `1` is *pending*, not failed, and
+Every asynchronous resource answers with `status` (how far the deployer got) and `state`
+(what the thing **is**: `running`, `deploying`, `paused`, `deleting`, `ready`, `pending`,
+`verifying`, `failed`). **Quote `state`** — it is the word that answers the question.
+
+- **Deployment** — `state` `running`, `paused`, `deploying` or `failed`.
+- **Domain** — can report failure too: `state` `failed` (`status` `error`).
+- **Disk, database, route, pull secret** — `state` is only ever `pending` or `ready`, **with
+  no failure value at all**. One of these sitting at `pending` is *pending*, not failed, and
   no error will ever arrive for it. Report it as still pending — never as failed, never as
   fine.
 - **Project, env group** — synchronous. If the call returned, it exists.
@@ -72,24 +76,24 @@ open it — say what the workload is instead.
 ## Deployments
 
 ```
-  🟢 api · WebService · running · actionStatus "success" · api.acme.com
+  🟢 api · WebService · running · api.acme.com
   ⏸ worker · Worker · paused · no external URL by design
-  ❌ cron-nightly · CronJob · actionStatus "failed" · see nortezh:troubleshooter
+  ❌ cron-nightly · CronJob · failed · see nortezh:troubleshooter
 ```
 
 ## Databases
 
 ```
-  🟢 orders-db · postgres · status 2 · db-orders.rcf2:5432
-  🟡 cache · redis · status 1 · still pending; no failure state exists
+  🟢 orders-db · postgres · ready · db-orders.rcf2:5432
+  🟡 cache · redis · pending · still provisioning; no failure state exists
 ```
 
 ## Disks, config, domains, routes
 
 ```
-  🟢 uploads · 20 GB · status 2 · mounted on api at /data
+  🟢 uploads · 20 GB · ready · mounted on api at /data
   🟢 acme-shared · env group · 4 keys · values not shown
-  🟢 api.acme.com/ · route · status 2 · to api
+  🟢 api.acme.com/ · route · ready · to api
 ```
 
 ## Not checked

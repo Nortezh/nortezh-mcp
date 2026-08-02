@@ -106,6 +106,7 @@ src/version.ts         read that stamp, or fall back when running from source
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
 src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
+src/humanize.ts        enum wire values -> words, plus the derived `state` (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
 src/local-tools.ts     serverInfo — the one tool answered in-process
@@ -211,7 +212,7 @@ Write into a skill only what the tool schemas **cannot** carry:
 - the order operations must happen in, and what depends on what
 - which failures are expected rather than wrong (`CAN_MAP_ONLY_WEB_SERVICE` on a Worker,
   `DEPLOYMENT_CLUSTER_NOT_SUPPORT_TRIAL` on trial billing)
-- asynchrony — that `deploymentGet.actionStatus` must be polled until it leaves `pending`
+- asynchrony — that `deploymentGet` must be polled until its `state` leaves `deploying`
 - steps that leave this API entirely: DNS records, GitHub secrets, service-account keys
 
 Do **not** restate a single call's parameters. That comes from the generated schema, and a
@@ -271,6 +272,36 @@ never existed.
 `src/envelope.ts` maps it: `ok:true` unwraps `result`; `ok:false` becomes an MCP tool
 error carrying the code, the message, and one line per failed validation rule. Each tool's
 description also names the codes that route can return, from the spec's `x-error-codes`.
+
+## Status enums are translated on the way out
+
+The API ships four encodings of "how far along is this": `api/deployment.ActionStatus` as a
+name, `pkg/api.ActionStatus` (disk, database) as a bare `1`/`2`, route and pull-secret
+`status` as `1`/`2`, and a revision's `status` as `1`/`2`/`3` where **`2` means deploying,
+not success**. A report built straight off that JSON reads `actionStatus "success"` on one
+line and `status 2` on the next for the same idea, which is what prompted this.
+
+`src/humanize.ts` normalizes the result before it is serialized:
+
+- `actionStatus` is emitted under the name **`status`**, always a name, never an integer.
+- a derived **`state`** says what the resource *is* — `running`, `deploying`, `paused`,
+  `pausing`, `deleting`, `deleted`, `ready`, `pending`, `verifying`, `failed` — by folding
+  `action` together with the status. "success" answers whether the deployer converged;
+  `state` answers the question that was actually asked.
+- `action` is passed through untouched.
+- an unmapped value is passed through rather than guessed at. A new enum member translated
+  into a name that happens to exist is a wrong answer nothing downstream can spot.
+
+The mapping is **per tool**, not per field name — `TOOL_SHAPES` covers every allowlisted
+operation whose 200-response schema carries `status` or `actionStatus`. Keying on the field
+name alone would make a revision's `2` mean "success".
+
+⚠️ The generated tool descriptions come from the backend's annotations and still say things
+like "poll deployment.get's actionStatus". `outputNote()` appends the reconciling line at
+`ListTools` time — not into `src/generated/tools.ts`, which is generated and never
+hand-edited. A new tool with a status field needs an entry in `TOOL_SHAPES`; `test/
+humanize.test.ts` fails if an entry names a tool that is not exposed, but nothing can detect
+a tool that *should* have an entry and does not.
 
 ## Schema conversion
 

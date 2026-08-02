@@ -9,6 +9,23 @@ and what can still be changed after it exists.
 Read this when you are unsure what something *is* — as opposed to which call to make, which
 the tool schemas already describe. Every claim here was checked against the API source.
 
+## How readiness is reported
+
+Every asynchronous resource answers with two fields, and both are words:
+
+- **`status`** — how far the deployer has got: `pending`, then `success` or, where the
+  resource can fail, `failed`. A domain uses `pending` / `verify` / `success` / `error`.
+- **`state`** — what the resource **is**, folding `status` together with `action` (the
+  recorded intent): `running`, `deploying`, `paused`, `pausing`, `deleting`, `deleted`,
+  `ready`, `pending`, `verifying`, `failed`. This is the field to quote to a user.
+
+⚠️ The raw API is not this tidy, and reading it directly will not match: disks, databases,
+routes and pull secrets return a bare integer (`1` pending, `2` success), a revision's
+integer means something else again (`1` pending, `2` **deploying**, `3` deployed), and the
+field is called `actionStatus` on deployments, disks and databases. **The MCP server
+translates all of it** — it renames `actionStatus` to `status`, converts every integer to
+its name, and derives `state`. `action` is passed through untouched.
+
 ## The dependency graph
 
 Read an arrow as "must exist first".
@@ -76,8 +93,9 @@ secret names one, by the cluster's `id`.
 - **Depends on:** a project and a cluster. Optionally an env group, a disk, a pull secret.
 - **Depended on by:** routes. ⚠️ **Deleting a deployment silently deletes its routes** — the
   FK cascades, there is no in-use check and no warning.
-- **Ready:** `deploymentGet` until `actionStatus` is the **string** `"success"`; `"failed"`
-  is a real outcome.
+- **Ready:** `deploymentGet` until `state` is **`running`** (`status` `"success"`).
+  `state` **`failed`** is a real outcome, not a placeholder. `paused` and `deleting` are the
+  other states you will see.
 - **Mutable:** most things, via `deploymentDeploy` — which always requires `project`,
   `location`, `name` **and `image`**, even for a one-field change.
 - ⚠️ **Immutable: `type`.** Written at create, never updated. A `WebService` cannot become a
@@ -106,7 +124,8 @@ makes one.
 
 - **Depends on:** a deployment. No independent existence; deleted with it.
 - **Depended on by:** nothing. `deploymentRollback` names one by number.
-- **Ready:** no state of its own — the deployment's `actionStatus` is the answer.
+- **Ready:** no state of its own — the deployment's `state` is the answer. A revision's own
+  `status` is historical: `pending`, `deploying`, `deployed`.
 - **Mutable:** no. A snapshot; deploying again makes a new one.
 - ⚠️ `deploymentRollback` **rewinds** `deployments.revision` to an earlier number. It does
   **not** create a new revision, and does **not** restore env-group links or `type`. A
@@ -137,8 +156,8 @@ lists it. The right home for values several services need.
 - **Depends on:** a project and a cluster. Gated on the **billing account's** disk feature —
   a refusal is `ACCESS_DENIED`.
 - **Depended on by:** any number of deployments — a disk is **not exclusive**.
-- **Ready:** `diskGet` until `actionStatus` is the **number `2`**. No failure value — a
-  stuck disk sits at `1` forever.
+- **Ready:** `diskGet` until `state` is **`ready`** (`status` `"success"`). No failure value
+  — a stuck disk sits at `pending` forever and no error ever arrives.
 - **Mutable:** `diskUpdate` **grows** it. Shrinking fails `DISK_CANNOT_DECREASE_SIZE`.
   Location and name are fixed.
 - ⚠️ **`DISK_IN_USE` does not protect you.** The in-use check reads **only**
@@ -159,8 +178,9 @@ lists it. The right home for values several services need.
   — a different table from `clusterList`'s `features`, so that can look fine and the create
   still fail with `DATABASE_CLUSTER_NOT_SUPPORTED`.
 - **Depended on by:** nothing structurally. See the warning under the graph.
-- **Ready:** `db*Get` until `actionStatus` is the **number `2`** *and* `host` is non-empty.
-  `host` and `port` are empty strings until then. No failure value.
+- **Ready:** `db*Get` until `state` is **`ready`** *and* `host` is non-empty. `host` and
+  `port` are empty strings until then. No failure value — a stuck database sits at
+  `pending`.
 - **Mutable:** nothing. No resize, no password rotation, and the image is fixed by the
   platform (`postgres:16`, `redis:8`, `mongo:8.2`). Getting it wrong means create another
   and migrate.
@@ -180,7 +200,7 @@ lists it. The right home for values several services need.
 - **Depends on:** a project and a cluster.
 - **Depended on by:** deployments naming it in `pullSecret`. Nothing stops you deleting one
   that is still referenced — the next pull just fails.
-- **Ready:** `pullsecretGet` — `status` is the **number `2`**, same shape as disk.
+- **Ready:** `pullsecretGet` — `state` is **`ready`**, same shape as disk.
 - **Mutable:** nothing; there is no update route. Rotate by creating another.
 - ⚠️ Names are unique per **(project, location)** — the same name can exist twice in one
   project, in different locations. A secret in the wrong location will not be found.
@@ -205,9 +225,10 @@ lists it. The right home for values several services need.
 - **Depended on by:** routes. Refused with `DOMAIN_IN_USED` while a route in that location
   still needs it, and `DOMAIN_CAN_NOT_DELETE` while it is pending. ⚠️ Deleting a domain that
   does not exist **returns success**.
-- **Ready:** `status` is a **string** — `pending`, `success`, `error`, `verify`.
-  ⚠️ **`error` is a real outcome**, so a domain is the one non-deployment resource that can
-  fail. A **non-CDN** domain is written `success` at create with an empty `verification`
+- **Ready:** `state` is **`ready`**; `status` is `pending`, `success`, `error` or `verify`.
+  ⚠️ **`state` `failed` means `status` is `error`, and `error` is a real outcome**, so a
+  domain is the one non-deployment resource that can fail. A **non-CDN** domain is written
+  `success` at create with an empty `verification`
   object — nothing to verify and nothing to poll. Only `cdn: true` is asynchronous.
 - **Mutable:** nothing. Delete and recreate.
 - ⚠️ **Domains are globally unique across the whole platform.** `DOMAIN_NOT_AVAILABLE` can
@@ -226,7 +247,7 @@ makes a custom domain serve.
 - **Depends on:** a deployment, and normally a registered domain — ⚠️ but
   `skipDomainVerify: true` bypasses the ownership check entirely, so a route can exist for a
   domain nobody registered. It exists for tests; do not set it.
-- **Ready:** `routeGet` until `status` is the **number `2`**. No failure value.
+- **Ready:** `routeGet` until `state` is **`ready`**. No failure value.
 - **Mutable:** nothing — delete and recreate.
 - ⚠️ `target` is a **URI**: `deployment://<name>`. A bare name fails validation.
 - ⚠️ Only a `WebService` can be a target — anything else is `CAN_MAP_ONLY_WEB_SERVICE`.
@@ -263,8 +284,9 @@ since user tokens last 7 days. It is a user row with an email of the form
 - **A domain error is HTTP 200 with `ok:false`.** The MCP layer already converts those into
   tool errors — if a call errors, it really failed.
 - **Only deployments and domains can report failure.** Database, disk, route and pull secret
-  report a bare integer `1` = pending, `2` = success, with no failure value at all, so
-  anything stuck sits at `1` indefinitely. Bound those waits and report.
+  have no failure value at all — the API models them as `1` pending / `2` success and
+  nothing else — so anything stuck sits at `state` `pending` indefinitely and no error will
+  ever arrive for it. Bound those waits and report.
 - **Nothing moves between projects or locations.** Both mean delete and recreate.
 - **Deletes are quieter than you expect.** A deployment takes its routes with it, a project
   delete leaves most of its resources behind, deleting a missing domain succeeds, and
