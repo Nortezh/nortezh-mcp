@@ -32,8 +32,8 @@ node dist/index.js version    # full stamp, build time, tool and prompt counts
 
 The model cannot see `serverInfo.version` — it sees tool names, descriptions and schemas and
 nothing else. So the same stamp is also exposed as a **`serverInfo` tool**, which is how you
-ask *in chat* whether the connected server is current. It is the only tool in
-`src/local-tools.ts`: answered in-process, no API call, and checked before the generated
+ask *in chat* whether the connected server is current. It lives in `src/local-tools.ts`
+alongside `deployGuide`: answered in-process, no API call, and checked before the generated
 tools so it still works when the token has expired.
 
 An MCP client caches the tool list at connect time, so **every rebuild needs a reconnect** —
@@ -96,6 +96,8 @@ src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
 src/prompts.ts         guided workflows exposed over prompts/list
+src/local-tools.ts     tools answered in-process: serverInfo, deployGuide
+src/guide-gate.ts      blocks the first write until the guidance has been delivered
 src/index.ts           MCP server, stdio transport
 ```
 
@@ -110,7 +112,7 @@ So one procedure, three doors, all rendering the same constant:
 
 ```
 prompts.ts  DEPLOY_STACK
-   ├─▶ /mcp__nortezh__deploy-stack   the user types it
+   ├─▶ /nortezh:deploy-stack         the user types it
    ├─▶ deployGuide tool              the model calls it — description always in context
    └─▶ GuideGate                     served on the first blocked write
 ```

@@ -70,9 +70,12 @@ Just ask:
 For anything that **creates or changes** infrastructure, start with the guided workflow:
 
 ```
-/mcp__nortezh__deploy-stack     set up or change a stack, end to end
-/mcp__nortezh__resources        what each resource is and depends on
+/nortezh:deploy-stack     set up or change a stack, end to end
+/nortezh:resources        what each resource is and depends on
 ```
+
+(`nortezh` is the server name you gave `claude mcp add` — rename it there and the
+commands follow.)
 
 `deploy-stack` reads your repo, takes inventory, asks what it cannot work out, then writes a
 plan and **waits for your approval before touching anything**. It creates the deployment

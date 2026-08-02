@@ -2,7 +2,8 @@
 //
 // Prompts are the native way to bundle a "skill" with an MCP server: the client lists
 // them over `prompts/list` and surfaces them as slash commands (in Claude Code,
-// `/mcp__nortezh__deploy-stack`). Nothing to install beyond `claude mcp add`, and it works
+// `/nortezh:deploy-stack`, where the prefix is the server name from `claude mcp add`).
+// Nothing to install beyond `claude mcp add`, and it works
 // in any MCP client rather than only Claude Code.
 //
 // The content here is the part the tool schemas cannot carry: which resources depend on
