@@ -109,7 +109,7 @@ src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)
 src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
 src/local-tools.ts     serverInfo — the one tool answered in-process
-src/install-plugin.ts  `install-plugin` — symlink skills/nortezh into ~/.claude/skills
+src/install.ts         `install` / `uninstall` — the ~/.claude/skills/nortezh symlink
 skills/nortezh/        the guidance: a Claude Code plugin, plain markdown, hand-authored
 src/index.ts           MCP server, stdio transport
 ```
@@ -142,18 +142,23 @@ for Claude Code to auto-load it as `nortezh@skills-dir` — no marketplace, no
 `claude plugin install`. The root `SKILL.md` stays an ordinary always-on skill and routes
 between the rest.
 
+Measured by `claude plugin details nortezh@skills-dir` — use it rather than guessing from
+file size, which undercounts:
+
 ```
-SKILL.md                        ~1k   router + the invariants
-skills/resources/SKILL.md       ~4k   nortezh:resources
-skills/deployer/SKILL.md        ~15k  nortezh:deployer
-skills/reporter/SKILL.md        ~1.4k nortezh:reporter
-skills/troubleshooter/SKILL.md  ~1.8k nortezh:troubleshooter
+                                always-on   on-invoke
+SKILL.md                             ~60        ~700    router + the invariants
+skills/resources/SKILL.md           ~100       ~5.7k    nortezh:resources
+skills/deployer/SKILL.md             ~90      ~22.4k    nortezh:deployer
+skills/reporter/SKILL.md             ~90       ~1.4k    nortezh:reporter
+skills/troubleshooter/SKILL.md      ~120       ~1.8k    nortezh:troubleshooter
+                                    ----
+                            total   ~393   every session
 ```
 
-Cost is graduated: ~400 tokens of descriptions are always on, the router loads when Nortezh
-comes up, and a capability's body only when it applies. One flat file would spend the whole
-procedure answering "how much does a disk cost?". `claude plugin details nortezh@skills-dir`
-prints the real per-component numbers.
+Cost is graduated: only the descriptions are always on, and a body loads when it applies. A
+read-only question costs the router plus `resources`; a real deploy pulls `deployer` too and
+lands near 28k. One flat file would spend all of that answering "how much does a disk cost?".
 
 ⚠️ Adding a skill means adding a line to the router by hand. Nothing discovers a sibling.
 
@@ -164,7 +169,7 @@ drift apart.
 The router carries the invariants that must survive even if no capability is loaded — the same
 ones that govern Bash, which is why they live in the always-loaded file.
 
-Installed with `nortezh-mcp install-plugin`, an explicit command rather than an npm
+Installed with `nortezh-mcp install`, an explicit command rather than an npm
 `postinstall`: a package writing into someone's Claude config unasked is invisible to
 uninstall.
 

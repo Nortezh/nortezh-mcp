@@ -17,7 +17,7 @@ const body = (name: string) => readFileSync(join(skills, name, 'SKILL.md'), 'utf
 
 /** The procedure alone — it points at the resource model rather than inlining it. */
 const procedure = body('deployer')
-/** The RESOURCE_MODEL alone. */
+/** The resource model alone. */
 const RESOURCE_MODEL = body('resources')
 /** What a session that followed the skill actually has in context: both. */
 const guidance = `${procedure}\n${RESOURCE_MODEL}`
@@ -40,7 +40,7 @@ test('readiness is described differently for deployments and for databases/disks
 
 test('the first deploy is expected to fail, and that is stated as expected', () => {
   // The deployment is created pointing at <registry>/<path>:latest before CI has pushed
-  // anything, so the pull fails. A RESOURCE_MODEL that reads "failed" as a problem will retry it,
+  // anything, so the pull fails. A model that reads "failed" as a problem will retry it,
   // dig through logUrl, or swap in nginx to get a green status — each of which breaks the
   // flow at the point where it is working correctly.
   const text = guidance
@@ -442,31 +442,36 @@ test('each resource states dependencies, readiness and mutability', () => {
   assert.ok(text.split('**Mutable:**').length - 1 >= 6, 'mutability')
 })
 
-test('the resource model does not contradict deploy-stack on the sharp facts', () => {
+test('the resource model does not contradict the procedure on the sharp facts', () => {
+  // Each of these was a confirmed error in the procedure at some point; the model must state
+  // the corrected version, or the two skills disagree inside one session.
+  // Flattened: the source wraps at 90 columns, so a fact can straddle a line break.
   const model = RESOURCE_MODEL.replace(/\s+/g, ' ')
-  // Each of these was a confirmed error in deploy-stack at some point; the resource model must
-  // state the corrected version, or the two prompts will disagree in the same session.
-  assert.match(RESOURCE_MODEL, /Immutable: `type`/)
-  assert.match(RESOURCE_MODEL, /non-CDN\*\* domain is written `success` at create/)
-  assert.match(RESOURCE_MODEL, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
-  assert.match(RESOURCE_MODEL, /replaces the whole map/)
-  assert.match(RESOURCE_MODEL, /do not put real secrets in one/)
-  assert.match(RESOURCE_MODEL, /any number of deployments — a disk is \*\*not exclusive\*\*/)
-  assert.match(RESOURCE_MODEL, /`projectGet` or `projectOverview`/)
+  assert.match(model, /Immutable: `type`/)
+  assert.match(model, /non-CDN\*\* domain is written `success` at create/)
+  assert.match(model, /`target` is a \*\*URI\*\*: `deployment:\/\/<name>`/)
+  assert.match(model, /replaces the whole map/)
+  assert.match(model, /do not put real secrets in one/)
+  assert.match(model, /any number of deployments — a disk is \*\*not exclusive\*\*/)
+  assert.match(model, /`projectGet` or `projectOverview`/)
 })
 
-test('deploy-stack INLINES the resource model rather than pointing at it', () => {
-  // An MCP prompt cannot fetch another prompt: prompts are user-invoked slash commands and
-  // the resource model has no prompts/get. A pointer would be advice it could never act on.
-  const text = guidance
-  assert.ok(text.includes(RESOURCE_MODEL), 'the resource model is not embedded verbatim')
-  assert.equal(text.includes('{{RESOURCE_MODEL}}'), false)
+test('the procedure POINTS AT the resource model rather than copying it', () => {
+  // The reverse of what this asserted while the procedure was an MCP prompt, which had to
+  // inline the model because a prompt cannot fetch another prompt. A skill can name a sibling
+  // skill, so a copy would only be a second place for the next edit to contradict.
+  assert.match(procedure, /The resource model is the `nortezh:resources` skill/)
+  assert.equal(
+    procedure.includes('Reference: what each Nortezh resource is'),
+    false,
+    'the model is copied into the procedure',
+  )
 })
 
-// Facts that were wrong in deploy-stack at some point and are now stated in the resource
-// RESOURCE_MODEL. The RESOURCE_MODEL is canonical: if a fact leaves it, the procedure is the only place it
-// lives and the next edit can contradict it silently — which is exactly how the original
-// twelve errors survived review.
+// Facts that were wrong in the procedure at some point and are now stated in the resource
+// model. The model is canonical: if a fact leaves it, the procedure is the only place it lives
+// and the next edit can contradict it silently — which is exactly how the original twelve
+// errors survived review.
 const CANONICAL_FACTS: Array<[string, RegExp]> = [
   ['deployment type is immutable', /Immutable: `type`/],
   ['env group update replaces', /replaces the whole map/],
@@ -626,7 +631,7 @@ test('output formatting forbids pipe tables without forbidding its own', () => {
   // rule has to scope itself or it reads as self-contradictory.
   const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Never use a markdown pipe table in output/)
-  assert.match(flat, /The tables in this prompt are reference material for you/)
+  assert.match(flat, /The tables in this skill are reference material for you/)
   assert.match(flat, /Every listing is its own fenced block/)
 })
 
@@ -814,7 +819,7 @@ test('credentials are governed by one positive invariant, not a blocklist', () =
 })
 
 test('a withheld tool is never resolved by making something public', () => {
-  // Observed for real: with pullsecretCreate gone, a RESOURCE_MODEL concluded "make the GHCR package
+  // Observed for real: with pullsecretCreate gone, a model concluded "make the GHCR package
   // public after first push, so no pull secret is needed". Removing a capability creates
   // pressure to route around it, and publishing is the cheapest route — it trades a console
   // step for permanently exposing every layer, build arg and baked-in file of the image.
@@ -928,9 +933,9 @@ test('pullsecretCreate is not an exposed tool', () => {
 
 test('the resource model does not claim the API annotation contradicts it', () => {
   // nortezh-backend 13c1283 corrected revision.go's rollback annotation to say it rewinds.
-  // The parenthetical telling the resource model to distrust the generated tool description outlived
+  // The parenthetical telling the model to distrust the generated tool description outlived
   // the thing it described.
   const model = RESOURCE_MODEL.replace(/\s+/g, ' ')
-  assert.equal(/the API's own annotation is wrong/.test(RESOURCE_MODEL), false)
+  assert.equal(/the API's own annotation is wrong/.test(model), false)
 })
 

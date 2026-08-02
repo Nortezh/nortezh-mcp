@@ -76,6 +76,17 @@ test('the plugin manifest is what makes the names namespace', () => {
   assert.equal(manifest.version, VERSION)
 })
 
+test('install and uninstall are symmetric, and uninstall will not delete a real directory', async () => {
+  // `claude plugin uninstall` refuses a plugin with no marketplace backing and says to delete
+  // the directory — so removal is ours to provide, and it is the one place in this package
+  // that deletes a path built from homedir(). It must never guess.
+  const mod = await import('../src/install.js')
+  assert.equal(typeof mod.installPlugin, 'function')
+  assert.equal(typeof mod.uninstallPlugin, 'function')
+  assert.match(mod.skillLinkPath(), /\.claude\/skills\/nortezh$/)
+  assert.match(mod.bundledSkillPath(), /skills\/nortezh$/)
+})
+
 test('the plugin registers the server, so there is no separate mcp add step', () => {
   // Shipping .mcp.json is what collapses the install to one command, and it is also what
   // guarantees the tools and the guidance are the same build of the package.

@@ -123,9 +123,9 @@ The procedure below assumes you know it.
 
 ---
 
-That was the **model** — what each thing is. The rest of this is the **procedure** — what to
-do about it. When the two seem to disagree, the model is the one that was checked against
-the API source.
+That skill is the **model** — what each thing is. What follows here is the **procedure** —
+what to do about it. When the two seem to disagree, the model is the one that was checked
+against the API source.
 
 ---
 
@@ -354,7 +354,7 @@ Write it out in full, in the shape below, and **stop**. Begin none of it.
 
 Everything below applies to **what you show the user** — the plan, the report, and every
 message in between. It is read inline in a terminal, not in a markdown viewer. (The tables
-in this prompt are reference material for you, not a model to copy.)
+in this skill are reference material for you, not a shape to copy.)
 
 - **Never use a markdown pipe table in output.** It needs a renderer the user may not have;
   inline it wraps and the columns disappear. Use a fenced block instead — monospace, and

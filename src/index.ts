@@ -24,16 +24,15 @@ import {
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
-import { installPlugin } from './install-plugin.js'
+import { installPlugin, uninstallPlugin } from './install.js'
 import { LOCAL_TOOLS } from './local-tools.js'
-import { readBuildInfo, versionString, VERSION } from './version.js'
+import { readBuildInfo, versionString } from './version.js'
 
 async function runServer(): Promise<void> {
   const { apiUrl, token, fromEnv } = resolveAuth()
   const client = new NortezhClient({ apiUrl, token })
 
   const byName = new Map<string, ToolSpec>(TOOLS.map((tool) => [tool.name, tool]))
-
 
   // Tokens expire after 7 days, and the failure lands mid-conversation. Rather than
   // making the user notice a tool error and go run a command, re-run the browser login
@@ -97,11 +96,12 @@ async function runServer(): Promise<void> {
   // The build stamp goes in serverInfo.version, which is what a client shows in its server
   // list — so "am I running the build I just made" is answerable by reading a number rather
   // than by hunting for a tool that was removed.
-  // Tools only. The guided workflows used to ship here as MCP prompts as well, rendered from
-  // the same text as the skill — two surfaces, one procedure, and a generator plus a
-  // drift-check to keep them equal. The skill does the job better (it is in context before the
-  // first tool call, and before Bash, which MCP cannot see at all), so the prompts went and
-  // `skills/nortezh/` is the single home for the guidance.
+  //
+  // Tools are the ONLY capability. The guided workflows used to ship here as MCP prompts too,
+  // rendered from the same text as the skill — two surfaces, one procedure, and a generator
+  // plus a drift-check to keep them equal. The skill does the job better, because it is in
+  // context before the first tool call and before Bash, which MCP cannot observe at all. So
+  // the prompts went, and `skills/nortezh/` is the single home for the guidance.
   const server = new Server(
     { name: 'nortezh', version: versionString() },
     { capabilities: { tools: {} } },
@@ -224,10 +224,17 @@ async function main(): Promise<void> {
     return
   }
 
-  // `install-skill` kept as an alias: it is what the command was called for its first few
-  // releases, and it is in READMEs and shell history. It installs a plugin, hence the rename.
-  if (command === 'install-plugin' || command === 'install-skill') {
+  // The longer names are kept as aliases: `install-skill` is what this was called for its
+  // first releases and is in shell history, and `install-plugin` names what it actually does.
+  // `install` is the one to type — for a CLI whose other job is being an MCP server, there is
+  // nothing else it could mean.
+  if (command === 'install' || command === 'install-plugin' || command === 'install-skill') {
     installPlugin()
+    return
+  }
+
+  if (command === 'uninstall' || command === 'uninstall-plugin') {
+    uninstallPlugin()
     return
   }
 
@@ -252,8 +259,9 @@ async function main(): Promise<void> {
         '  nortezh-mcp            run the MCP server over stdio (what an MCP client starts)',
         '  nortezh-mcp login      sign in via the browser and store a token',
         '  nortezh-mcp logout     delete the stored token',
-        '  nortezh-mcp install-plugin  link the bundled plugin into ~/.claude/skills —',
-        '                         registers the MCP server AND the nortezh:* skills',
+        '  nortezh-mcp install    hook into Claude Code: registers the MCP server AND',
+        '                         the nortezh:* skills, as one plugin',
+        '  nortezh-mcp uninstall  unhook it again',
         '  nortezh-mcp version',
         '',
         'Environment:',

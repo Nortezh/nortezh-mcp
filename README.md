@@ -1,7 +1,8 @@
 # nortezh-mcp
 
-Manage Nortezh by prompt. An [MCP](https://modelcontextprotocol.io) server giving Claude 55
-tools over the Nortezh user API — projects, deployments, disks, databases, routes, domains.
+Manage Nortezh in plain language. An [MCP](https://modelcontextprotocol.io) server giving
+Claude 55 tools over the Nortezh user API — projects, deployments, disks, databases, routes,
+domains — plus the skills that tell it how to use them safely.
 
 Runs locally. Your token stays on your machine.
 
@@ -17,17 +18,21 @@ pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp
 nortezh-mcp login
 
 # 3. add the plugin — this is what registers the tools AND the skills
-nortezh-mcp install-plugin
+nortezh-mcp install
 ```
 
 **4. Restart Claude Code** (or `/reload-plugins`), then check:
 
 ```bash
-claude plugin list                      # nortezh@skills-dir
-claude plugin details nortezh@skills-dir  # 4 skills, 1 MCP server, token cost
+claude plugin details nortezh@skills-dir   # 4 skills, 1 MCP server, token cost
 ```
 
 In a session, `call serverInfo` should report a version and `55` API routes.
+(`claude plugin list` will not show it — that lists plugins installed from a marketplace.)
+
+`--allow-build` in step 1 is required because the package compiles itself at install time.
+Without it pnpm stops with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. On npm, drop the flag:
+`npm i -g github:Nortezh/nortezh-mcp`.
 
 ### Why there is no `claude mcp add`
 
@@ -52,10 +57,6 @@ claude mcp remove nortezh --scope user
 ```
 </details>
 
-`--allow-build` is required because the package compiles itself at install time. Without it
-pnpm stops with `ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED`. On npm, drop the flag:
-`npm i -g github:Nortezh/nortezh-mcp`.
-
 <details>
 <summary>Without installing</summary>
 
@@ -74,7 +75,7 @@ Fine for a look around; not for deploying anything.
 
 ```bash
 pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp   # pull the latest
-nortezh-mcp install-plugin                                        # re-point the plugin
+nortezh-mcp install                                              # re-point the plugin
 ```
 
 Then restart Claude Code, or `/reload-plugins` and reconnect from `/mcp` — both the tool list
@@ -92,17 +93,31 @@ and the plugin are read when a session starts.
 In this order — the first step needs the command to still exist.
 
 ```bash
-nortezh-mcp logout           # delete the stored token
-rm ~/.claude/skills/nortezh  # the plugin — takes the skills and the server with it
-pnpm rm -g nortezh-mcp       # npm rm -g nortezh-mcp
+nortezh-mcp uninstall     # unhook the plugin: server and skills both go
+nortezh-mcp logout        # delete the stored token
+rmdir ~/.nortezh          # logout removes the file, not the directory
+pnpm rm -g nortezh-mcp    # npm rm -g nortezh-mcp
 ```
 
-(If you ever ran `claude mcp add nortezh` by hand, `claude mcp remove nortezh --scope user`
-too.)
+Then restart Claude Code.
 
-That is everything it put on your machine. `logout` removes
-`~/.nortezh/credentials.json`; if you skip it the token sits there until it expires. Nothing
-on Nortezh itself is affected — projects, deployments and databases are untouched.
+`uninstall` only ever unlinks its own symlink, and refuses if `~/.claude/skills/nortezh` turns
+out to be a real directory — that would be someone else's skill.
+
+That is everything it wrote. Claude Code records **no** state for a plugin loaded from
+`~/.claude/skills`, so there is nothing to clean out of `settings.json` or
+`installed_plugins.json` the way a marketplace install would leave behind. (`claude plugin
+uninstall` does not apply here — it refuses plugins with no marketplace backing and tells you
+to delete the directory, which is what this command does.)
+
+Two cases leave something behind:
+
+- **You ran `claude mcp add nortezh` at some point.** That registration is yours, not the
+  plugin's: `claude mcp remove nortezh --scope user`.
+- **`NORTEZH_TOKEN` is set in your shell profile.** `logout` warns about this, because the
+  server prefers it over the stored file — unset it or you are not actually signed out.
+
+Nothing on Nortezh itself is affected: projects, deployments and databases are untouched.
 
 ## Login
 
@@ -145,10 +160,9 @@ Actions workflow, and goes green once you push. It never builds images locally a
 asks for a credential; DNS records, service-account keys and pull secrets come back to you
 with step-by-step instructions.
 
-> ⚠️ **Step 4 is not optional if you want any of that.** The skills are the only place the
-> rules live — the server itself ships tools and nothing else. Without them, "deploy this to
-> nortezh" runs with none of the guidance, including the part about not building images
-> locally.
+> ⚠️ **Step 3 is what installs the skills.** They are the only place the rules live — the
+> server itself ships tools and nothing else. Without the plugin, "deploy this to nortezh"
+> runs with none of the guidance, including the part about not building images locally.
 
 ## Good to know
 
@@ -184,8 +198,17 @@ different API URL. `nortezh-mcp logout`, then sign in again.
 **A change is not showing up.** The tool list is cached at connect time — reconnect from
 `/mcp`, then `call serverInfo` to confirm the build changed. See [Updating](#updating).
 
-**Nothing in `/mcp` at all.** Run `nortezh-mcp` by hand — startup errors go to stderr,
-which the client may hide.
+**Nothing in `/mcp` at all.** The server comes from the plugin now, so check that first:
+`claude plugin details nortezh@skills-dir`. If that errors, the link is missing or stale —
+re-run `nortezh-mcp install` and restart. If the plugin is fine, run `nortezh-mcp` by
+hand; startup errors go to stderr, which the client may hide.
+
+**Tools work but `nortezh:*` skills never fire.** Same plugin, so the same check. A common
+cause is `~/.claude/skills/nortezh` being a real directory from an older install rather than a
+symlink — `nortezh-mcp install` refuses to replace one, and says so.
+
+**Two `nortezh` servers.** You ran `claude mcp add nortezh` at some point and the plugin now
+registers it too. `claude mcp remove nortezh --scope user`.
 
 ---
 
