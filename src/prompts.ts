@@ -910,27 +910,51 @@ of that URL.
 value differs by \`cdn\` — read it, never write one from memory. A non-CDN domain has **no
 verification at all**, so its empty \`verification\` fields are not records to publish.
 
-> Point your domain at Nortezh with this DNS record:
+⚠️ **Who terminates TLS depends on \`cdn\`, and getting it backwards leaves the site
+unreachable.** The Nortezh ingress serves a **self-signed** certificate
+(\`CN=parapet-ingress-controller\`) and redirects HTTP to HTTPS. So:
+
+\`\`\`
+  cdn=false   customer's Cloudflare must PROXY (orange cloud)
+              SSL/TLS mode = Full          ← not Full (strict), not Flexible
+              nothing else terminates TLS with a public cert
+
+  cdn=true    DNS only (grey cloud)
+              Nortezh creates a custom hostname on ITS Cloudflare and proxies
+              there; orange here would be a double proxy
+\`\`\`
+
+For \`cdn=false\` — the default and the common case — the handoff is:
+
+> Point your domain at Nortezh:
 >
 > \`\`\`
 >   CNAME   <their domain>   <dnsConfig.cname[0]>
 > \`\`\`
 >
-> On Cloudflare, set it to **DNS only** (grey cloud), not Proxied.
+> On Cloudflare: set the record to **Proxied** (orange cloud), and
+> SSL/TLS → overview → **Full**.
 >
 > Tell me when it is live.
 
-Then stop and wait. Do not explain TLS termination or SSL modes unless something goes wrong.
+Then stop and wait. Do not explain the TLS reasoning unless something goes wrong.
 
 **Keep in reserve, for when they report a problem:**
-- Proxied (orange cloud) breaks certificate issuance and causes redirect loops — Cloudflare
-  terminates TLS while Nortezh also redirects to HTTPS. Grey cloud first, always. If they
-  want the proxy later, SSL mode must be **Full (strict)**, never Flexible.
+- ⚠️ **Not Full (strict)** — the origin's certificate is self-signed, so strict rejects it
+  with **526**. **Not Flexible** — the origin 301s HTTP to HTTPS, so Flexible loops; and if
+  the app sends HSTS (\`Strict-Transport-Security: max-age=…\`) that loop is pinned into every
+  visitor's browser for the lifetime of the header.
+- **Grey cloud on a \`cdn=false\` domain leaves the site down**, serving the self-signed cert
+  directly. It is not a safe first step here.
+- A records pointing at the ingress IPs are **not necessarily wrong** — \`dnsConfig.cname\`
+  resolves to those same addresses. Check what they resolve to before telling anyone to
+  delete records.
 - Cloudflare flattens a CNAME at the apex automatically, which is what makes a root domain
-  work here at all. Expected, not a problem to route around.
-- The proxy caches: if enabled later and a deploy seems not to land, purge first.
-- Other providers need the same CNAME; only the UI differs. One that cannot CNAME at the
-  apex is a real constraint — ask rather than guess a workaround.
+  work here at all.
+- The proxy caches: if a deploy seems not to land, purge first.
+- Other providers need the same CNAME; only the UI differs — but a provider with no proxy of
+  its own cannot serve \`cdn=false\` over HTTPS at all, which is a real constraint to raise
+  rather than work around.
 
 **3. \`routeCreate\`** maps \`domain\` + \`path\` onto a deployment.
 
@@ -1087,9 +1111,8 @@ is not GitHub Actions and sees none of this.
 
 #### Then write \`.github/workflows/deploy-<name>.yaml\`
 
-Fill in every placeholder from the answers above — do not leave a single \`<...>\` behind. Two
-lines are conditional rather than fillable: drop \`pull_secret\` entirely when the registry is
-public, and drop \`port\` for a \`Worker\` or \`CronJob\`.
+Fill in every placeholder from the answers above — do not leave a single \`<...>\` behind.
+\`port\` is conditional rather than fillable: drop it for a \`Worker\` or \`CronJob\`.
 
 \`\`\`yaml
 name: Deploy <name>
@@ -1142,7 +1165,6 @@ jobs:
         image: \${{ needs.build.outputs.image_name }}
         port: <port>
         type: <type>
-        pull_secret: <pull-secret>
       env:
         SA_AUTH_EMAIL: \${{ secrets.NORTEZH_SA_EMAIL }}
         SA_AUTH_KEY: \${{ secrets.NORTEZH_SA_KEY }}
@@ -1163,10 +1185,10 @@ Notes on that file, so you can adapt it rather than copy it blindly:
 - The image tag is computed **once**, in the \`image\` step, exposed as a job output, and
   consumed by both the build tag and the deploy input. That is what stops the two drifting
   apart — never write the registry path twice.
-- \`pull_secret\` names a pull secret that must **already exist** in Nortezh, created by the
-  user (6.2) — confirm it with \`pullsecretList\` before writing the name here.
-  **Omit the line entirely** if the registry is public or the deployment has no pull secret;
-  naming one that does not exist fails the deploy.
+- ⚠️ **Do not add a \`pull_secret\` input.** \`nortezh-action@v1.2.0\` does not accept one: it
+  logs \`Unexpected input(s) 'pull_secret'\` and ignores it. It is unnecessary anyway — the
+  deployment already stores \`pullSecret\` from its create, and an omitted field is preserved
+  on a revision, so the secret keeps applying.
 - \`port\` and \`type\` must match what 6.3 deployed. A \`Worker\` or \`CronJob\` takes no port.
 
 #### Then hand it back

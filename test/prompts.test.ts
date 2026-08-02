@@ -266,13 +266,39 @@ test('the cname is read from domainGet, not written from memory', () => {
   assert.match(flat, /always read it, never write one from memory/)
 })
 
-test('Cloudflare proxy guidance is explicit', () => {
-  const flat = deployStack!.render({}).replace(/\s+/g, ' ')
-  // The grey-cloud instruction rides along with the handoff itself, because getting it
-  // wrong wastes the whole DNS round trip. The reasoning stays in reserve.
-  assert.match(flat, /set it to \*\*DNS only\*\* \(grey cloud\), not Proxied/)
-  assert.match(flat, /Full \(strict\)/)
+test('who terminates TLS follows the cdn flag, not a fixed answer', () => {
+  // From a real run (session b8fc25a2, carmateauto.vip): the Nortezh ingress serves a
+  // self-signed cert (CN=parapet-ingress-controller) and 301s HTTP to HTTPS. So on a
+  // cdn=false domain the customer's Cloudflare proxy IS what terminates TLS publicly —
+  // grey cloud leaves the site unreachable, and Full (strict) rejects the origin with 526.
+  // The prompt previously said grey cloud always, and named Full (strict) as the fix.
+  const text = deployStack!.render({})
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /Who terminates TLS depends on `cdn`/)
+  assert.match(text, /cdn=false {3}customer's Cloudflare must PROXY \(orange cloud\)/)
+  assert.match(text, /SSL\/TLS mode = Full {10}← not Full \(strict\), not Flexible/)
+  assert.match(text, /cdn=true {4}DNS only \(grey cloud\)/)
+  assert.match(flat, /strict rejects it with \*\*526\*\*/)
+  assert.match(flat, /Grey cloud on a `cdn=false` domain leaves the site down/)
+  // The old wrong advice must not come back.
+  assert.equal(/set it to \*\*DNS only\*\* \(grey cloud\), not Proxied/.test(flat), false)
 })
+
+test('the workflow does not pass pull_secret to nortezh-action', () => {
+  // Observed in CI: nortezh-action@v1.2.0 logs "Unexpected input(s) 'pull_secret'" and
+  // ignores it. The deployment already stores pullSecret from its create, and an omitted
+  // field is preserved on a revision.
+  const text = deployStack!.render({})
+  assert.equal(/^\s+pull_secret:/m.test(text), false, 'pull_secret is still in the template')
+  const flat = text.replace(/\s+/g, ' ')
+  assert.match(flat, /Do not add a `pull_secret` input/)
+  assert.match(flat, /Unexpected input\(s\) 'pull_secret'/)
+})
+
+// A test asserting "DNS only (grey cloud), not Proxied" and "Full (strict)" used to live
+// here. Both were wrong, and the test held them in place through several reviews — it
+// checked that the prompt said a thing, never that the thing was true. Superseded by
+// "who terminates TLS follows the cdn flag", which encodes what the origin actually serves.
 
 test('manual steps are handed over short, then waited on', () => {
   // Front-loading the explanation buries the instruction. The rule is: say what to do,
