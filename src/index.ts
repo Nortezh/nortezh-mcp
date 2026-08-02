@@ -16,6 +16,7 @@ import {
   API_URL_ENV,
   clearCredentials,
   credentialsPath,
+  readCredentials,
   DEFAULT_API_URL,
   resolveApiUrl,
   resolveAuth,
@@ -202,6 +203,19 @@ async function runServer(): Promise<void> {
   console.error(`nortezh-mcp ${versionString()}: ${TOOLS.length} tools, API ${apiUrl}`)
 }
 
+/** Shared by `logout` and `uninstall --all`. */
+function logoutAndReport(): void {
+  const removed = clearCredentials()
+  console.error(
+    removed ? `Signed out. Removed ${credentialsPath()}` : 'Already signed out — no stored credentials.',
+  )
+  // Saying "signed out" while an env token keeps working would be a lie: the server prefers
+  // NORTEZH_TOKEN over the file and would still authenticate.
+  if (process.env[TOKEN_ENV]?.trim()) {
+    console.error(`⚠️  ${TOKEN_ENV} is still set, so calls will keep using it. Unset it to fully sign out.`)
+  }
+}
+
 async function main(): Promise<void> {
   const command = process.argv[2]
 
@@ -212,15 +226,7 @@ async function main(): Promise<void> {
   }
 
   if (command === 'logout') {
-    const removed = clearCredentials()
-    console.error(
-      removed ? `Signed out. Removed ${credentialsPath()}` : 'Already signed out — no stored credentials.',
-    )
-    // Saying "signed out" while an env token keeps working would be a lie: the server
-    // prefers NORTEZH_TOKEN over the file and would still authenticate.
-    if (process.env[TOKEN_ENV]?.trim()) {
-      console.error(`⚠️  ${TOKEN_ENV} is still set, so calls will keep using it. Unset it to fully sign out.`)
-    }
+    logoutAndReport()
     return
   }
 
@@ -235,6 +241,17 @@ async function main(): Promise<void> {
 
   if (command === 'uninstall' || command === 'uninstall-plugin') {
     uninstall()
+
+    // Signing out is NOT part of uninstalling by default. Unhooking a plugin and deleting a
+    // credential are different things, the second is only undoable through the browser, and
+    // the command's name promises the first. `--all` is the opt-in for a clean sweep.
+    console.error('')
+    if (process.argv.includes('--all')) {
+      logoutAndReport()
+    } else if (readCredentials() !== null) {
+      console.error('Your stored token is still there — `nortezh-mcp uninstall --all` removes it too.')
+    }
+    console.error('The package itself is still installed: pnpm rm -g nortezh-mcp')
     return
   }
 
@@ -261,7 +278,7 @@ async function main(): Promise<void> {
         '  nortezh-mcp logout     delete the stored token',
         '  nortezh-mcp install    hook into Claude Code: registers the MCP server AND',
         '                         the nortezh:* skills, as one plugin',
-        '  nortezh-mcp uninstall  unhook it again',
+        '  nortezh-mcp uninstall  unhook it again (--all also signs you out)',
         '  nortezh-mcp version',
         '',
         'Environment:',

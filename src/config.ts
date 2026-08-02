@@ -1,6 +1,6 @@
 // Where the server gets its API base URL and bearer token.
 
-import { chmodSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -75,22 +75,36 @@ export function writeCredentials(credentials: Credentials): string {
 /**
  * Deletes the stored credentials. Returns false when there were none.
  *
- * Only removes the file. A token supplied through NORTEZH_TOKEN lives in the environment,
- * so `logout` cannot reach it — the caller says so rather than reporting a sign-out that
- * did not happen.
+ * Removes the file, and the directory when that leaves it empty — `logout` should be the
+ * undo of `login`, and ~/.nortezh exists only to hold that file.
+ *
+ * A token supplied through NORTEZH_TOKEN lives in the environment, so `logout` cannot reach
+ * it — the caller says so rather than reporting a sign-out that did not happen.
  *
  * ⚠️ Only ENOENT means "there were none". Swallowing every error reported a permission
  * problem as "already signed out", which is the one lie this function must not tell: the
  * token is still on disk and the user has been told it is gone.
  */
 export function clearCredentials(): boolean {
+  let removed: boolean
   try {
     unlinkSync(credentialsPath())
-    return true
+    removed = true
   } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false
-    throw error
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+    removed = false
   }
+
+  // ~/.nortezh exists only to hold that file, so leaving an empty directory behind means
+  // `logout` is not quite the undo of `login`. rmdir refuses a non-empty directory, which is
+  // exactly the guard wanted here: anything else in there is not ours to delete.
+  try {
+    rmdirSync(dirname(credentialsPath()))
+  } catch {
+    /* not empty, not there, or not ours — all fine, and none of them worth a message */
+  }
+
+  return removed
 }
 
 /** The API base URL: NORTEZH_API_URL if set, production otherwise. */

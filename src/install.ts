@@ -125,7 +125,6 @@ export function uninstall(): void {
   console.error(`Removed: ${link} (was -> ${target})`)
   console.error('That takes the nortezh MCP server and the nortezh:* skills with it.')
   console.error('Restart Claude Code to apply.')
-  console.error('')
-  console.error('Still installed: the package itself (pnpm rm -g nortezh-mcp) and your')
-  console.error('stored token (nortezh-mcp logout — run it before removing the package).')
+  // What is still installed is left to the caller to say: only it knows whether --all was
+  // passed, and printing "run logout" immediately before running logout reads as a bug.
 }

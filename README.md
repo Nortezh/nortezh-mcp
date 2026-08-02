@@ -90,19 +90,22 @@ and the plugin are read when a session starts.
 
 ## Uninstalling
 
-In this order — the first step needs the command to still exist.
+In this order — the first command has to still exist to run.
 
 ```bash
-nortezh-mcp uninstall     # unhook the plugin: server and skills both go
-nortezh-mcp logout        # delete the stored token
-rmdir ~/.nortezh          # logout removes the file, not the directory
-pnpm rm -g nortezh-mcp    # npm rm -g nortezh-mcp
+nortezh-mcp uninstall --all   # unhook the plugin and delete the stored token
+pnpm rm -g nortezh-mcp        # npm rm -g nortezh-mcp
 ```
 
 Then restart Claude Code.
 
+Without `--all`, `uninstall` unhooks the plugin and **leaves you signed in** — unhooking and
+signing out are different things, and a browser round-trip is the only way back. It tells you
+the token is still there.
+
 `uninstall` only ever unlinks its own symlink, and refuses if `~/.claude/skills/nortezh` turns
-out to be a real directory — that would be someone else's skill.
+out to be a real directory — that would be someone else's skill. `logout` removes
+`~/.nortezh` too, once taking the credentials file out leaves it empty.
 
 That is everything it wrote. Claude Code records **no** state for a plugin loaded from
 `~/.claude/skills`, so there is nothing to clean out of `settings.json` or
