@@ -287,7 +287,9 @@ line and `status 2` on the next for the same idea, which is what prompted this.
 - a derived **`state`** says what the resource *is* — `running`, `deploying`, `paused`,
   `pausing`, `deleting`, `deleted`, `ready`, `pending`, `verifying`, `failed` — by folding
   `action` together with the status. "success" answers whether the deployer converged;
-  `state` answers the question that was actually asked.
+  `state` answers the question that was actually asked. A **deployment or a database**
+  reaches `running` (both are workloads); a disk, route or pull secret reaches `ready`,
+  since nothing in them runs.
 - `action` is passed through untouched.
 - an unmapped value is passed through rather than guessed at. A new enum member translated
   into a name that happens to exist is a wrong answer nothing downstream can spot.

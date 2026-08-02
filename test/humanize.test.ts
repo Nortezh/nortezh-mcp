@@ -49,6 +49,20 @@ test('a disk or database integer becomes a name, under the name `status`', () =>
   })
 })
 
+test('a provisioned database is running; a disk is only ready', () => {
+  // Same wire encoding, different words: a database is a workload serving connections,
+  // a disk is storage that exists. Reporting a database as "ready" reads as "created but
+  // not up".
+  const state = (tool: string) =>
+    (humanize(tool, { actionStatus: 2 }) as { state?: string }).state
+
+  assert.equal(state('dbPostgresGet'), 'running')
+  assert.equal(state('dbRedisList'), 'running')
+  assert.equal(state('dbMongoGet'), 'running')
+  assert.equal(state('diskGet'), 'ready')
+  assert.equal(state('routeGet'), undefined) // routes carry `status`, not `actionStatus`
+})
+
 test('a route or pull secret keeps its field name and loses the integer', () => {
   assert.deepEqual(humanize('routeGet', { path: '/', status: 2 }), {
     path: '/',

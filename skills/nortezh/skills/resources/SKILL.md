@@ -18,6 +18,8 @@ Every asynchronous resource answers with two fields, and both are words:
 - **`state`** — what the resource **is**, folding `status` together with `action` (the
   recorded intent): `running`, `deploying`, `paused`, `pausing`, `deleting`, `deleted`,
   `ready`, `pending`, `verifying`, `failed`. This is the field to quote to a user.
+  Deployments and managed databases reach **`running`** — they are workloads. Disks, routes
+  and pull secrets reach **`ready`**: nothing in them runs.
 
 ⚠️ The raw API is not this tidy, and reading it directly will not match: disks, databases,
 routes and pull secrets return a bare integer (`1` pending, `2` success), a revision's
@@ -178,7 +180,7 @@ lists it. The right home for values several services need.
   — a different table from `clusterList`'s `features`, so that can look fine and the create
   still fail with `DATABASE_CLUSTER_NOT_SUPPORTED`.
 - **Depended on by:** nothing structurally. See the warning under the graph.
-- **Ready:** `db*Get` until `state` is **`ready`** *and* `host` is non-empty. `host` and
+- **Ready:** `db*Get` until `state` is **`running`** *and* `host` is non-empty. `host` and
   `port` are empty strings until then. No failure value — a stuck database sits at
   `pending`.
 - **Mutable:** nothing. No resize, no password rotation, and the image is fixed by the

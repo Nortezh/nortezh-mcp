@@ -23,8 +23,9 @@ nothing on Nortezh is broken — the questions are whether the GitHub Actions ru
 whether it succeeded, and whether it set the real tag. Look there, not here.
 
 **2. Is it actually failed, or just pending?** Only **deployments** and **domains** can report
-failure. A disk, database, route or pull secret has only `state` `pending` / `ready` — there
-is **no failure value**, so a broken one sits at `pending` forever and no error is produced.
+failure. A disk, database, route or pull secret only ever leaves `state` `pending` for
+`ready` (`running`, for a database) — there is **no failure value**, so a broken one sits at
+`pending` forever and no error is ever produced.
 "Stuck at pending" means *look at what it depends on* — not *wait longer*.
 
 **3. Is a pull secret missing?** This one hides inside case 1. The pull secret must exist

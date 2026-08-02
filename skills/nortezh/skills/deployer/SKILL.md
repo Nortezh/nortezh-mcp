@@ -548,7 +548,7 @@ quote.
 | resource | poll | ready when | can fail? |
 |---|---|---|---|
 | deployment | `deploymentGet` | `state` is **`running`** | yes — `state` `failed` |
-| database | `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` | `state` is **`ready`**, and `host` is non-empty | no |
+| database | `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` | `state` is **`running`**, and `host` is non-empty | no |
 | disk | `diskGet` | `state` is **`ready`** | no |
 | route | `routeGet` | `state` is **`ready`** | no |
 | pull secret | `pullsecretGet` | `state` is **`ready`** | no |

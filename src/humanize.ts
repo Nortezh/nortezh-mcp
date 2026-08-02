@@ -16,6 +16,7 @@
 //
 //   - `actionStatus` is returned under the name `status`, never as a number.
 //   - a derived `state` says what the resource IS — running, paused, deploying, ready —
+//     a deployment and a database both `running`, a disk or route merely `ready` —
 //     by folding `action` (the intent) together with the status (the progress). That is
 //     the question being asked; "success" only answers whether the deployer converged.
 //   - `action` is left alone. It already marshals as a name, and `state` is where the two
@@ -27,7 +28,8 @@
 /** Which of the API's status encodings a tool's result carries. */
 export type ResultShape =
   | 'deployment'
-  | 'databaseOrDisk'
+  | 'database'
+  | 'disk'
   | 'routeOrPullSecret'
   | 'domain'
   | 'revision'
@@ -45,14 +47,14 @@ export const TOOL_SHAPES: Readonly<Record<string, ResultShape>> = {
   deploymentGet: 'deployment',
   deploymentList: 'deployment',
   deploymentLogRevision: 'revision',
-  diskGet: 'databaseOrDisk',
-  diskList: 'databaseOrDisk',
-  dbPostgresGet: 'databaseOrDisk',
-  dbPostgresList: 'databaseOrDisk',
-  dbRedisGet: 'databaseOrDisk',
-  dbRedisList: 'databaseOrDisk',
-  dbMongoGet: 'databaseOrDisk',
-  dbMongoList: 'databaseOrDisk',
+  diskGet: 'disk',
+  diskList: 'disk',
+  dbPostgresGet: 'database',
+  dbPostgresList: 'database',
+  dbRedisGet: 'database',
+  dbRedisList: 'database',
+  dbMongoGet: 'database',
+  dbMongoList: 'database',
   routeGet: 'routeOrPullSecret',
   routeList: 'routeOrPullSecret',
   pullsecretGet: 'routeOrPullSecret',
@@ -73,6 +75,13 @@ const REVISION_STATUS: Readonly<Record<number, string>> = {
 
 /** A resource whose only intent is "exist": pending until the deployer applies it. */
 const ASYNC_STATE: Readonly<Record<string, string>> = { pending: 'pending', success: 'ready' }
+
+/**
+ * A database is a workload, not a piece of config — once provisioned it is a process
+ * serving connections, so it reads `running` like a deployment does. Disks, routes and
+ * pull secrets are `ready`: nothing in them runs.
+ */
+const DATABASE_STATE: Readonly<Record<string, string>> = { pending: 'pending', success: 'running' }
 
 /** action x actionStatus -> what the deployment currently IS. */
 const DEPLOYMENT_STATE: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -108,7 +117,15 @@ export function outputNote(toolName: string): string | undefined {
         'paused, pausing, deleting, deleted or failed — which folds `action` and the status ' +
         'together. Poll `state`, or `status`; there is no `actionStatus` field in the output.'
       )
-    case 'databaseOrDisk':
+    case 'database':
+      return (
+        'Output note: this server returns `actionStatus` under the name `status`, as a name ' +
+        'rather than the API\'s raw integer (1 -> "pending", 2 -> "success"), and adds a ' +
+        'derived `state`: "pending" or "running". There is no `actionStatus` field in the ' +
+        'output, and no failure value exists for this resource — a database that never ' +
+        'provisions stays "pending" forever.'
+      )
+    case 'disk':
       return (
         'Output note: this server returns `actionStatus` under the name `status`, as a name ' +
         'rather than the API\'s raw integer (1 -> "pending", 2 -> "success"), and adds a ' +
@@ -182,7 +199,8 @@ function rewrite(node: Record<string, unknown>, shape: ResultShape): Record<stri
 function sourceKey(node: Record<string, unknown>, shape: ResultShape): string | undefined {
   switch (shape) {
     case 'deployment':
-    case 'databaseOrDisk':
+    case 'database':
+    case 'disk':
       return 'actionStatus' in node ? 'actionStatus' : undefined
     case 'routeOrPullSecret':
     case 'revision':
@@ -198,7 +216,8 @@ function readableStatus(value: unknown, shape: ResultShape): string | undefined 
     case 'domain':
       // Already a name on the wire — nothing to translate.
       return typeof value === 'string' ? value : undefined
-    case 'databaseOrDisk':
+    case 'database':
+    case 'disk':
     case 'routeOrPullSecret':
       return typeof value === 'number' ? ASYNC_STATUS[value] : undefined
     case 'revision':
@@ -218,7 +237,9 @@ function deriveState(
       return byAction(DEPLOYMENT_STATE, node['action'], status)
     case 'domain':
       return byAction(DOMAIN_STATE, node['action'], status)
-    case 'databaseOrDisk':
+    case 'database':
+      return DATABASE_STATE[status]
+    case 'disk':
     case 'routeOrPullSecret':
       return ASYNC_STATE[status]
     case 'revision':

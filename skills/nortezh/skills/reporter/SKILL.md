@@ -39,10 +39,11 @@ Every asynchronous resource answers with `status` (how far the deployer got) and
 
 - **Deployment** — `state` `running`, `paused`, `deploying` or `failed`.
 - **Domain** — can report failure too: `state` `failed` (`status` `error`).
-- **Disk, database, route, pull secret** — `state` is only ever `pending` or `ready`, **with
-  no failure value at all**. One of these sitting at `pending` is *pending*, not failed, and
-  no error will ever arrive for it. Report it as still pending — never as failed, never as
-  fine.
+- **Database** — `state` `running` once provisioned, `pending` until then.
+- **Disk, route, pull secret** — `state` `ready` or `pending`; nothing in them runs.
+- **Database, disk, route, pull secret** — those two words are all there is, **no failure
+  value at all**. One sitting at `pending` is *pending*, not failed, and no error will ever
+  arrive for it. Report it as still pending — never as failed, never as fine.
 - **Project, env group** — synchronous. If the call returned, it exists.
 
 ⚠️ **A deployment's `url` is always populated and does not always resolve.** It is a bare
@@ -84,7 +85,7 @@ open it — say what the workload is instead.
 ## Databases
 
 ```
-  🟢 orders-db · postgres · ready · db-orders.rcf2:5432
+  🟢 orders-db · postgres · running · db-orders.rcf2:5432
   🟡 cache · redis · pending · still provisioning; no failure state exists
 ```
 
