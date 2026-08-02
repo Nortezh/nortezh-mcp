@@ -47,6 +47,42 @@ stamp is written to `dist/`, never `src/`: it contains a timestamp and a counter
 every run, and `check-generated.ts` compares committed generated output against a fresh
 generation — a stamp in `src/` would fail that check permanently.
 
+## Is the user running the current build?
+
+The other half of the same question, asked from the user's side: `src/update-check.ts` runs
+`git ls-remote <repo> HEAD` and compares the sha to `build-info.commit`.
+
+`git ls-remote`, **not** the GitHub API: the repository is private, so an unauthenticated
+request answers 404, and every alternative means reading a credential out of another tool.
+ls-remote goes through git's own credential helper or ssh agent — the same auth that made
+`pnpm i -g github:Nortezh/nortezh-mcp` work — so it succeeds exactly when the install did,
+and nothing here ever sees a token. https (from `package.json`) is tried first, then ssh,
+because a private repo is often cloned over an ssh key and nothing else.
+
+- ⚠️ **It must never block and never prompt.** The check is fired *after* `server.connect()`
+  and never awaited, and both calls run under `GIT_TERMINAL_PROMPT=0`,
+  `GIT_SSH_COMMAND='ssh -oBatchMode=yes'` and a 5s timeout. Without those, lapsed credentials
+  produce a password prompt on a process whose stdout is the MCP transport.
+- The verdict is cached in `os.tmpdir()/nortezh-mcp-update.json` for 24h, **keyed on the
+  running commit** — updating is what invalidates it, and without the key someone who updated
+  and restarted would keep being told to update. It is not under `~/.nortezh`: that directory
+  holds only the credentials, and `logout` removes it when it empties.
+- It can only prove *different*, never *older* — an installed copy has no git history. That
+  is reported as out of date anyway; the case it gets wrong is a developer on their own
+  commit, who can read the two shas.
+- Four surfaces, one line: stderr at startup, an extra content block on the **first** tool
+  result of the process (the only surface the model can see and repeat), `serverInfo`'s
+  `updateAvailable` / `latestCommit`, and `version` / `install` / `login`.
+- ⚠️ The notice always ends with `nortezh-mcp install`. On pnpm the plugin symlink still
+  points at the previous version's store directory after an update, and a dangling one takes
+  the **tools** with it — so a notice that stopped at the install command would cause a worse
+  problem than the one it reported.
+- Every failure is silent, and skipped states are normal: running from source, no commit in
+  the stamp, a `-dirty` tree, or `NORTEZH_NO_UPDATE_CHECK` set.
+
+`test/update-check.test.ts` covers the deciding and the wording; the network call itself is
+exercised by hand (`node dist/index.js version`).
+
 ## Environment
 
 Both optional; the defaults cover normal use, which is why they are not in the README.
@@ -55,6 +91,7 @@ Both optional; the defaults cover normal use, which is why they are not in the R
 |---|---|---|
 | `NORTEZH_API_URL` | `https://api.nortezh.com/user` | must include `/user` — every user route is mounted under it |
 | `NORTEZH_TOKEN` | — | use instead of the stored login. Never replaced, and no browser is opened, so this is what CI wants |
+| `NORTEZH_NO_UPDATE_CHECK` | — | set to anything non-empty to switch off the "a newer version is available" check |
 
 Point a client at a local stack:
 
@@ -103,6 +140,7 @@ scripts/sync-spec.ts   vendor swagger.json from ../nortezh-backend
 scripts/check-generated.ts  fail if the committed tools.ts is not what the generator makes
 scripts/stamp.ts       write dist/build-info.json — the per-build counter and commit
 src/version.ts         read that stamp, or fall back when running from source
+src/update-check.ts    is origin/main ahead of this build? ls-remote, cached, silent on failure
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
 src/schema.ts          Swagger 2.0 -> JSON Schema (pure, tested)
 src/envelope.ts        arpc envelope -> tool result or tool error (pure, tested)

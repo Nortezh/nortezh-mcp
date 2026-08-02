@@ -19,6 +19,7 @@
 // have meant ~90 tokens on every request to deliver the same text a second way.
 
 import { readBuildInfo, versionString } from './version.js'
+import { knownStatus } from './update-check.js'
 import { TOOLS } from './generated/tools.js'
 
 export interface LocalTool {
@@ -37,11 +38,16 @@ export const LOCAL_TOOLS: LocalTool[] = [
       'Version and build of this MCP server itself, not the Nortezh API. ' +
       'Call it to check whether the connected server is the current build — after a rebuild ' +
       'a client keeps the old process until it reconnects, and nothing else the model can ' +
-      'see distinguishes them.',
+      'see distinguishes them. Also reports updateAvailable when a newer build exists upstream.',
     inputSchema: { type: 'object', properties: {} },
     readOnly: true,
     run: () => {
       const info = readBuildInfo()
+      // Whatever the background check already resolved, or a fresh cached verdict. Never a
+      // network call: this tool has to answer instantly and has to work offline. When
+      // nothing is known — check disabled, no git, running from source — both fields are
+      // omitted rather than guessed at.
+      const update = knownStatus(info)
       return {
         version: versionString(info),
         semver: info.version,
@@ -49,6 +55,8 @@ export const LOCAL_TOOLS: LocalTool[] = [
         build: info.build,
         commit: info.commit,
         builtAt: info.builtAt,
+        updateAvailable: update === null ? undefined : update.outdated,
+        latestCommit: update === null ? undefined : update.latest.slice(0, 7),
         stale: info.build === 0 ? 'unknown — running from source, no build stamp' : undefined,
         tools: TOOLS.length + LOCAL_TOOLS.length,
         apiRoutes: TOOLS.length,

@@ -41,6 +41,12 @@ can link. Fine for a look around; not for deploying.
 
 ## Updating
 
+**It tells you.** The server compares the commit it was built from against `origin/main` once
+a day, and when they differ it says so — in the session (the first tool result carries a
+note), in `serverInfo`, and on `nortezh-mcp version`. It uses your own git access, the same
+one the install used, and stays quiet when it cannot check. `NORTEZH_NO_UPDATE_CHECK=1` turns
+it off.
+
 ```bash
 pnpm i -g --allow-build=nortezh-mcp github:Nortezh/nortezh-mcp
 nortezh-mcp install     # ⚠️ not optional on pnpm
