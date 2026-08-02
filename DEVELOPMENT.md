@@ -65,6 +65,22 @@ claude mcp add nortezh-local --scope user \
 Register it under a **different name** than the production one, or you will be one
 reconnect away from running a deploy against the wrong cluster.
 
+## dist/ is committed
+
+Because the package installs straight from git, and `npm i -g` does **not** install
+devDependencies — no tsx, no tsc, nothing to build with at install time. A `prepare` script
+was tried and fails with `sh: tsx: command not found`. Shipping the build output is what
+makes the install work at all.
+
+So **`npm run build` and commit `dist/` with every source change.** Forget, and users get
+the old server while the diff looks perfectly fine — nothing in the source tree reveals it.
+`npm run check` runs `scripts/check-dist.ts`, which compiles to a temp directory and
+compares, so CI and a local check both catch it.
+
+The build stamp in `dist/build-info.json` names the commit the build ran against, so it is
+always one behind the commit that ships it. Build on a clean tree — a `-dirty` suffix in a
+shipped artifact means it was built from uncommitted work.
+
 ## Layout
 
 ```
