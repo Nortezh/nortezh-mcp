@@ -15,6 +15,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "prepare": "npm run build",
     "sync-spec": "tsx scripts/sync-spec.ts",
     "generate": "tsx scripts/generate.ts",
     "build": "npm run generate && tsc && tsx scripts/stamp.ts",
@@ -29,5 +30,9 @@
     "@types/node": "^22.15.0",
     "tsx": "^4.23.1",
     "typescript": "^5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nortezh/nortezh-mcp.git"
   }
 }
