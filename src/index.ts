@@ -30,7 +30,8 @@ import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { PROMPTS } from './prompts.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
-import { LOCAL_TOOLS } from './local-tools.js'
+import { DEPLOY_STACK_GUIDE, LOCAL_TOOLS } from './local-tools.js'
+import { GuideGate } from './guide-gate.js'
 import { readBuildInfo, versionString, VERSION } from './version.js'
 
 async function runServer(): Promise<void> {
@@ -38,6 +39,10 @@ async function runServer(): Promise<void> {
   const client = new NortezhClient({ apiUrl, token })
 
   const byName = new Map<string, ToolSpec>(TOOLS.map((tool) => [tool.name, tool]))
+
+  // Disabled for NORTEZH_TOKEN sessions — that is CI, where there is nobody to read the
+  // guidance and a blocked call is just a failed job step.
+  const gate = new GuideGate({ enabled: !fromEnv, guidance: DEPLOY_STACK_GUIDE })
 
   // Tokens expire after 7 days, and the failure lands mid-conversation. Rather than
   // making the user notice a tool error and go run a command, re-run the browser login
@@ -120,6 +125,11 @@ async function runServer(): Promise<void> {
     const prompt = PROMPTS.find((candidate) => candidate.name === request.params.name)
     if (prompt === undefined) throw new Error(`Unknown prompt: ${request.params.name}`)
 
+    // The user invoked the guidance themselves — the gate has nothing left to teach, so it
+    // must not then block their first write. Any prompt counts: `resources` carries the same
+    // resource model, and someone who reached for either is not the case this guards.
+    gate.markDelivered()
+
     return {
       description: prompt.description,
       messages: [
@@ -167,7 +177,13 @@ async function runServer(): Promise<void> {
     // the token is expired — "which build is this?" is a question you ask while debugging.
     const local = LOCAL_TOOLS.find((candidate) => candidate.name === request.params.name)
     if (local !== undefined) {
-      return { content: [{ type: 'text' as const, text: JSON.stringify(local.run(), null, 2) }] }
+      // deployGuide delivers the guidance, so calling it satisfies the gate. serverInfo is
+      // read-only and irrelevant either way; marking on any local tool keeps this from
+      // depending on a name.
+      if (local.name === 'deployGuide') gate.markDelivered()
+      const result = local.run()
+      const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2)
+      return { content: [{ type: 'text' as const, text }] }
     }
 
     const tool = byName.get(request.params.name)
@@ -176,6 +192,14 @@ async function runServer(): Promise<void> {
         isError: true,
         content: [{ type: 'text' as const, text: `Unknown tool: ${request.params.name}` }],
       }
+    }
+
+    // Before anything reaches the API: the first write in a session does not run until the
+    // guidance has been delivered. Returned as a tool error so the model treats it as a
+    // failed call rather than a result — which is what it is.
+    const blocked = gate.check(tool)
+    if (blocked !== null) {
+      return { isError: true, content: [{ type: 'text' as const, text: blocked }] }
     }
 
     const args = request.params.arguments ?? {}

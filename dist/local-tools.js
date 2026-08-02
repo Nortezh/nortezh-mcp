@@ -15,6 +15,27 @@
 import { readBuildInfo, versionString } from './version.js';
 import { PROMPTS } from './prompts.js';
 import { TOOLS } from './generated/tools.js';
+/**
+ * The deploy-stack guidance, as `deployGuide` returns it and as the gate serves it.
+ *
+ * Rendered from the same PromptSpec the slash command uses, so the two cannot drift — one
+ * procedure, reachable three ways: the slash command, the tool, and the gate.
+ *
+ * The prepended note exists because the prompt is written for the slash-command path, where
+ * nothing has been said yet: rendered with no arguments it opens "the user gave nothing up
+ * front". Reached as a tool result that is false — the request is already in the
+ * conversation — and left uncorrected the model re-interviews the user for what they just
+ * said.
+ */
+export const DEPLOY_STACK_GUIDE = [
+    '⚠️ You are reading this mid-conversation, as a tool result. The user has already said',
+    'what they want, above. Treat anything they have stated as answered and do not ask again.',
+    'Everything else below applies unchanged.',
+    '',
+    '---',
+    '',
+    PROMPTS.find((prompt) => prompt.name === 'deploy-stack')?.render({}) ?? '',
+].join('\n');
 export const LOCAL_TOOLS = [
     {
         name: 'serverInfo',
@@ -39,6 +60,26 @@ export const LOCAL_TOOLS = [
                 prompts: PROMPTS.map((prompt) => prompt.name),
             };
         },
+    },
+    {
+        name: 'deployGuide',
+        // This description is the ENTIRE trigger surface. It is the only part of the guidance
+        // that is always in context, and the model decides from it alone whether to pull the
+        // rest — so it names the platform, the verbs, and the read-only cases to stay out of.
+        //
+        // Excluding lookups matters: firing on "what's deployed?" would load ~19k tokens to
+        // answer a question that needs one tool call.
+        description: 'Read BEFORE any call that creates, changes or deletes something on Nortezh — ' +
+            'deploying a service, adding or patching a deployment, database, disk, domain, route, ' +
+            'env group or pull secret, wiring GitHub Actions for it, or working out why a Nortezh ' +
+            'deploy failed. Returns the required order, the approval gate, and the steps the user ' +
+            'must do themselves. Do NOT call it for read-only questions ("list my projects", ' +
+            "\"what's deployed\", \"show metrics\") — use the nortezh tools directly for those.",
+        inputSchema: { type: 'object', properties: {} },
+        readOnly: true,
+        // The tool exists because a prompt is user-invoked only (the model has no prompts/get),
+        // so a plain "deploy this to nortezh" would otherwise run with none of it in context.
+        run: () => DEPLOY_STACK_GUIDE,
     },
 ];
 export const LOCAL_TOOL_NAMES = new Set(LOCAL_TOOLS.map((tool) => tool.name));

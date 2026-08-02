@@ -99,6 +99,33 @@ src/prompts.ts         guided workflows exposed over prompts/list
 src/index.ts           MCP server, stdio transport
 ```
 
+## The guidance reaches the model three ways
+
+An MCP prompt is **user-invoked only** — the model has no `prompts/get`, so a plain "deploy
+this to nortezh" runs with none of it in context. That is not theoretical: a run on a build
+containing every rule still built an image locally and pushed it with the laptop's docker
+credential, because the slash command was never typed.
+
+So one procedure, three doors, all rendering the same constant:
+
+```
+prompts.ts  DEPLOY_STACK
+   ├─▶ /mcp__nortezh__deploy-stack   the user types it
+   ├─▶ deployGuide tool              the model calls it — description always in context
+   └─▶ GuideGate                     served on the first blocked write
+```
+
+`src/guide-gate.ts` blocks the **first mutating call** of a session and returns the guidance
+as a tool error, so the call genuinely did not run and the model retries with the rules in
+context. A `deployGuide` tool alone would not close this — the model still has to *choose* to
+call it, and the failure being fixed is a model that did not.
+
+- Read-only tools are never gated; the inventory step of the procedure needs them.
+- The retry always proceeds — the guidance was in the blocked response, so blocking again
+  would loop forever.
+- Invoking a prompt or calling `deployGuide` satisfies it: there is nothing left to teach.
+- Disabled when `NORTEZH_TOKEN` is set. That is CI, where nobody reads a tool error.
+
 ## Prompts are how a "skill" ships with the server
 
 `src/prompts.ts` holds the guided workflows. The client lists them over `prompts/list` and
