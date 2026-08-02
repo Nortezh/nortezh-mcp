@@ -8,27 +8,36 @@ Runs **locally**. Your token stays on your machine; nothing is deployed.
 
 ## Install
 
+No clone, no build. Sign in once, then add it:
+
 ```bash
-git clone git@github.com:Nortezh/nortezh-mcp.git
-cd nortezh-mcp
-npm install && npm run build
-node dist/index.js login
+npx -y github:Nortezh/nortezh-mcp login
+claude mcp add nortezh --scope user -- npx -y github:Nortezh/nortezh-mcp
 ```
 
 `login` opens your browser for the normal Google sign-in and saves the token to
 `~/.nortezh/credentials.json` (mode `600`). Tokens last 7 days; when one expires the
 server re-opens the browser once and retries — you do not have to track it.
 
-Requires Node 18+.
+`--scope user` makes it available in every project. Check with `claude mcp list`, or
+`/mcp` inside a session. Remove with `claude mcp remove nortezh --scope user`.
 
-## Add to Claude
+Requires Node 18+ and git. The first run clones and compiles, so it takes a few seconds;
+after that npm caches it.
+
+<details>
+<summary>From a local checkout instead</summary>
 
 ```bash
+git clone git@github.com:Nortezh/nortezh-mcp.git
+cd nortezh-mcp
+npm install                 # `prepare` builds it
+node dist/index.js login
 claude mcp add nortezh --scope user -- node "$PWD/dist/index.js"
 ```
 
-`--scope user` makes it available in every project. Check with `claude mcp list`, or
-`/mcp` inside a session. Remove with `claude mcp remove nortezh --scope user`.
+Use this if you are changing the server — see [DEVELOPMENT.md](./DEVELOPMENT.md).
+</details>
 
 <details>
 <summary>Claude Desktop, or any other MCP client</summary>
@@ -37,8 +46,8 @@ claude mcp add nortezh --scope user -- node "$PWD/dist/index.js"
 {
   "mcpServers": {
     "nortezh": {
-      "command": "node",
-      "args": ["/absolute/path/to/nortezh-mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "github:Nortezh/nortezh-mcp"]
     }
   }
 }
