@@ -32,19 +32,19 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** Where the bundled skill lives inside the package: <root>/skills/nortezh. */
-export function bundledSkillPath(): string {
+/** Where the bundled plugin lives inside the package: <root>/skills/nortezh. */
+export function bundledPluginPath(): string {
   // This file runs from dist/, so the package root is one level up.
   return resolve(dirname(fileURLToPath(import.meta.url)), '../skills/nortezh')
 }
 
-export function skillLinkPath(): string {
+export function pluginLinkPath(): string {
   return join(homedir(), '.claude', 'skills', 'nortezh')
 }
 
-export function installPlugin(): void {
-  const target = bundledSkillPath()
-  const link = skillLinkPath()
+export function install(): void {
+  const target = bundledPluginPath()
+  const link = pluginLinkPath()
 
   mkdirSync(dirname(link), { recursive: true })
 
@@ -102,8 +102,8 @@ export function installPlugin(): void {
  * from an install that predates this — deleting it would destroy work that is not ours, and
  * `rm -rf` on a path built from `homedir()` is exactly the code that must not guess.
  */
-export function uninstallPlugin(): void {
-  const link = skillLinkPath()
+export function uninstall(): void {
+  const link = pluginLinkPath()
 
   let existing: ReturnType<typeof lstatSync>
   try {

@@ -72,7 +72,7 @@ test('the pull secret must exist before CI pushes, not before the first deploy',
   assert.match(flat, /hides inside the expected failure/)
 })
 
-test('it tells the resource model to ask with options rather than assume', () => {
+test('it tells the model to ask with options rather than assume', () => {
   // The text wraps, so collapse whitespace before matching the phrase.
   const flat = guidance.replace(/\s+/g, ' ')
   assert.match(flat, /Never pick a project, location, engine, size, port or domain on their behalf/)
@@ -89,16 +89,16 @@ test('no templating leaks into the skill files', () => {
 })
 
 /**
- * Tool ids the prompts name deliberately to say they are NOT available.
+ * Tool ids the guidance names deliberately, to say they are NOT available.
  *
- * Withholding a tool only works if the prompt explains why, otherwise the next reader adds
+ * Withholding a tool only works if the guidance explains why, otherwise the next reader adds
  * it back. So "pullsecretCreate is deliberately not one of your tools" has to be sayable
  * without the existence check below treating it as an instruction to call it.
  */
 const WITHHELD_TOOLS = new Set(['pullsecretCreate'])
 
-test('every tool the prompt instructs the resource model to call actually exists', () => {
-  // The prompt names tools in prose, so a rename or an allowlist change could leave it
+test('every tool the guidance tells the model to call actually exists', () => {
+  // The guidance names tools in prose, so a rename or an allowlist change could leave it
   // telling the resource model to call something that is not there.
   const names = new Set(TOOLS.map((tool) => tool.name))
   const text = guidance
@@ -112,18 +112,19 @@ test('every tool the prompt instructs the resource model to call actually exists
     // flag identifiers that are not a parameter of any tool.
     .filter((candidate) => !FIELD_NAMES.has(candidate))
 
-  assert.ok(referenced.length > 10, 'expected the prompt to name tools')
+  assert.ok(referenced.length > 10, 'expected the guidance to name tools')
   for (const name of referenced) {
-    assert.ok(names.has(name), `prompt references ${name}, which is not an exposed tool`)
+    assert.ok(names.has(name), `the guidance references ${name}, which is not an exposed tool`)
   }
 })
 
-test('the embedded workflow YAML is emitted verbatim, not escaped', () => {
-  // This broke once. The YAML lives inside a TypeScript template literal, so `${{ }}` has
-  // to be escaped in the source — and one backslash too many ships `\${{ secrets.X }}`,
-  // which GitHub Actions treats as a literal string rather than a secret, and `\\` where
-  // the shell needs a single line continuation. Both produce a workflow that looks right
-  // in review and fails at run time.
+test('the embedded workflow YAML says what it must, verbatim', () => {
+  // This broke once, when the YAML lived inside a TypeScript template literal and `${{ }}`
+  // needed escaping: one backslash too many shipped `\${{ secrets.X }}`, which Actions
+  // treats as a literal string rather than a secret. It is plain markdown now, so that
+  // particular hazard is gone — but the backslash checks cost nothing and the secret names
+  // are still worth pinning, because a workflow that names the wrong one looks right in
+  // review and fails at run time.
   const text = guidance
 
   assert.match(text, /\$\{\{ secrets\.NORTEZH_SA_EMAIL \}\}/)
@@ -166,9 +167,9 @@ test('the service account setup comes before the GitHub secrets', () => {
   assert.ok(account > 0 && secrets > account && workflow > secrets)
 })
 
-test('the prompt does not promise tools that are deliberately excluded', () => {
+test('the guidance does not promise tools that are deliberately excluded', () => {
   const text = guidance
-  // serviceaccount* and cicd* are not exposed; the prompt must hand those steps to the
+  // serviceaccount* and cicd* are not exposed; the guidance must hand those steps to the
   // user rather than instruct the resource model to call them.
   assert.equal(/`serviceaccount[A-Z]/.test(text), false)
   assert.equal(/`cicd[A-Z]/.test(text), false)
@@ -266,7 +267,7 @@ test('who terminates TLS follows the cdn flag, not a fixed answer', () => {
   // self-signed cert (CN=parapet-ingress-controller) and 301s HTTP to HTTPS. So on a
   // cdn=false domain the customer's Cloudflare proxy IS what terminates TLS publicly —
   // grey cloud leaves the site unreachable, and Full (strict) rejects the origin with 526.
-  // The prompt previously said grey cloud always, and named Full (strict) as the fix.
+  // The guidance previously said grey cloud always, and named Full (strict) as the fix.
   const text = guidance
   const flat = text.replace(/\s+/g, ' ')
   assert.match(flat, /Who terminates TLS depends on `cdn`/)
@@ -292,7 +293,7 @@ test('the workflow does not pass pull_secret to nortezh-action', () => {
 
 // A test asserting "DNS only (grey cloud), not Proxied" and "Full (strict)" used to live
 // here. Both were wrong, and the test held them in place through several reviews — it
-// checked that the prompt said a thing, never that the thing was true. Superseded by
+// checked that the text said a thing, never that the thing was true. Superseded by
 // "who terminates TLS follows the cdn flag", which encodes what the origin actually serves.
 
 test('manual steps are handed over short, then waited on', () => {
@@ -518,7 +519,7 @@ test('every resource in the resource model answers the same questions', () => {
 // ---------------------------------------------------------------------------------------
 // The seven-step flow.
 //
-// The spine of the prompt: nothing mutating may happen before the user approves a written
+// The spine of the procedure: nothing mutating may happen before the user approves a written
 // plan, and the report must describe what ran rather than what was planned.
 // ---------------------------------------------------------------------------------------
 
@@ -626,7 +627,7 @@ test('red is not overloaded between deletion and failure', () => {
 })
 
 test('output formatting forbids pipe tables without forbidding its own', () => {
-  // The prompt itself uses pipe tables as reference material for the resource model. The rule is
+  // The procedure itself uses pipe tables as reference material for the model. The rule is
   // about what reaches the user's terminal, where a pipe table has no renderer — so the
   // rule has to scope itself or it reads as self-contradictory.
   const flat = guidance.replace(/\s+/g, ' ')
@@ -649,13 +650,13 @@ test('chips are kept out of the diagram, which uses the sign markers', () => {
 //
 // Every test above checks that a fact is STATED somewhere. That is what let four errors
 // survive the last review: the resource model was corrected and the procedure kept the old claim, so
-// the same prompt asserted both. These check the procedure does not contradict the resource model.
+// the same text asserted both. These check the procedure does not contradict the model.
 // ---------------------------------------------------------------------------------------
 
 test('the rules do not deny the flow they sit above', () => {
-  // Rule 3 used to open "There is no fixed sequence", written when the prompt was a menu.
+  // Rule 3 used to open "There is no fixed sequence", written when the procedure was a menu.
   // With Steps 1-7 in place that reads as permission to skip the approval gate — the two
-  // strongest instructions in the prompt, contradicting each other on page one.
+  // strongest instructions in the guidance, contradicting each other on page one.
   const flat = guidance.replace(/\s+/g, ' ')
   assert.equal(/There is no fixed sequence/.test(flat), false)
   assert.match(flat, /The seven steps are fixed; the operations inside them are not/)

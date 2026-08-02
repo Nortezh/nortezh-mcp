@@ -24,7 +24,7 @@ import {
 import { formatError, UNAUTHORIZED } from './envelope.js'
 import { login } from './login.js'
 import { TOOLS, type ToolSpec } from './generated/tools.js'
-import { installPlugin, uninstallPlugin } from './install.js'
+import { install, uninstall } from './install.js'
 import { LOCAL_TOOLS } from './local-tools.js'
 import { readBuildInfo, versionString } from './version.js'
 
@@ -229,12 +229,12 @@ async function main(): Promise<void> {
   // `install` is the one to type — for a CLI whose other job is being an MCP server, there is
   // nothing else it could mean.
   if (command === 'install' || command === 'install-plugin' || command === 'install-skill') {
-    installPlugin()
+    install()
     return
   }
 
   if (command === 'uninstall' || command === 'uninstall-plugin') {
-    uninstallPlugin()
+    uninstall()
     return
   }
 

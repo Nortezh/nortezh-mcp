@@ -81,10 +81,10 @@ test('install and uninstall are symmetric, and uninstall will not delete a real 
   // the directory — so removal is ours to provide, and it is the one place in this package
   // that deletes a path built from homedir(). It must never guess.
   const mod = await import('../src/install.js')
-  assert.equal(typeof mod.installPlugin, 'function')
-  assert.equal(typeof mod.uninstallPlugin, 'function')
-  assert.match(mod.skillLinkPath(), /\.claude\/skills\/nortezh$/)
-  assert.match(mod.bundledSkillPath(), /skills\/nortezh$/)
+  assert.equal(typeof mod.install, 'function')
+  assert.equal(typeof mod.uninstall, 'function')
+  assert.match(mod.pluginLinkPath(), /\.claude\/skills\/nortezh$/)
+  assert.match(mod.bundledPluginPath(), /skills\/nortezh$/)
 })
 
 test('the plugin registers the server, so there is no separate mcp add step', () => {
