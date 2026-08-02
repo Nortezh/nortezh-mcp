@@ -86,6 +86,8 @@ scripts/allowlist.ts   which operations become tools — the only hand-maintaine
 scripts/generate.ts    spec + allowlist -> src/generated/tools.ts
 scripts/sync-spec.ts   vendor swagger.json from ../nortezh-backend
 scripts/check-generated.ts  fail if the committed tools.ts is not what the generator makes
+scripts/generate-skill.ts   src/prompts.ts -> skills/nortezh/
+scripts/check-skill.ts      fail if the committed skill is not what that generator makes
 scripts/stamp.ts       write dist/build-info.json — the per-build counter and commit
 src/version.ts         read that stamp, or fall back when running from source
 src/spec-types.ts      the Swagger 2.0 subset this spec actually uses
@@ -95,7 +97,7 @@ src/client.ts          the only code that makes HTTP requests
 src/login.ts           loopback browser login
 src/prompts.ts         guided workflows exposed over prompts/list
 src/local-tools.ts     tools answered in-process: serverInfo, deployGuide
-src/guide-gate.ts      blocks the first write until the guidance has been delivered
+src/install-skill.ts   `install-skill` — symlink skills/nortezh into ~/.claude/skills
 src/index.ts           MCP server, stdio transport
 ```
 
@@ -106,25 +108,31 @@ this to nortezh" runs with none of it in context. That is not theoretical: a run
 containing every rule still built an image locally and pushed it with the laptop's docker
 credential, because the slash command was never typed.
 
-So one procedure, three doors, all rendering the same constant:
-
 ```
-prompts.ts  DEPLOY_STACK
-   ├─▶ /nortezh:deploy-stack         the user types it
-   ├─▶ deployGuide tool              the model calls it — description always in context
-   └─▶ GuideGate                     served on the first blocked write
+prompts.ts  DEPLOY_STACK / RESOURCE_MODEL
+   ├─▶ /nortezh:deploy-stack     the user types it
+   ├─▶ deployGuide tool          the model calls it — description always in context
+   └─▶ skills/nortezh/           the model loads it BEFORE it runs anything
 ```
 
-`src/guide-gate.ts` blocks the **first mutating call** of a session and returns the guidance
-as a tool error, so the call genuinely did not run and the model retries with the rules in
-context. A `deployGuide` tool alone would not close this — the model still has to *choose* to
-call it, and the failure being fixed is a model that did not.
+⚠️ **Only the skill reaches the shell.** `docker build`, `docker push` and reading a
+credential store never touch an MCP tool, so nothing inside the server can see them — a
+prompt, a tool, and an earlier server-side gate all arrive too late by construction. The
+skill's frontmatter is in context from the first token of the turn, which is the only place
+that catches it. A `GuideGate` that blocked the first mutating call was tried and removed for
+exactly this reason: it fired at `deploymentCreate`, long after the image had been built.
 
-- Read-only tools are never gated; the inventory step of the procedure needs them.
-- The retry always proceeds — the guidance was in the blocked response, so blocking again
-  would loop forever.
-- Invoking a prompt or calling `deployGuide` satisfies it: there is nothing left to teach.
-- Disabled when `NORTEZH_TOKEN` is set. That is CI, where nobody reads a tool error.
+The skill is three files so the cost is graduated — `SKILL.md` (~1k) whenever Nortezh comes
+up, `resources.md` (~4k) for any Nortezh work, `deploy-stack.md` (~15k) only before something
+is created or changed. `deploy-stack.md` **references** `resources.md` rather than inlining
+it; the prompt has to inline it, because a prompt cannot fetch another prompt.
+
+`SKILL.md` carries the invariants that must survive even if no sibling file is read — and
+those are the same ones that govern Bash, which is why they live in the always-loaded file.
+
+Installed with `nortezh-mcp install-skill`, an explicit command rather than an npm
+`postinstall`: a package writing into someone's Claude config unasked is invisible to
+uninstall. It symlinks into the installed package, so `npm i -g` updates flow through.
 
 ## Prompts are how a "skill" ships with the server
 
