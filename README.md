@@ -114,10 +114,6 @@ green once you push. It never builds images locally and never asks for a credent
 
 ## Good to know
 
-> ⚠️ `dbPostgresGet` / `dbRedisGet` / `dbMongoGet` return the database password in plain text.
-> That is what lets Claude build a connection string — but it then lives in the conversation
-> and anywhere that is logged.
-
 > ⚠️ **Creating a pull secret is deliberately not possible.** It would mean pasting registry
 > credentials into the chat. You create it in the console and tell Claude its *name*.
 
