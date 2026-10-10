@@ -358,6 +358,13 @@ export const TOOLS: ToolSpec[] = [
           "description": "cronjob schedule (crontab syntax, required and validated only when type is CronJob)",
           "type": "string"
         },
+        "secretEnvs": {
+          "description": "SecretEnvs is nil when absent (retain current bindings), empty to clear, otherwise replaces all bindings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/api_deployment.SecretEnv"
+          }
+        },
         "sidecars": {
           "description": "Sidecars are optional extra containers alongside the main one, at most 2. Only the Cloud SQL\nProxy kind currently exists: sidecars: [{\"cloudSqlProxy\":{\"instance\":\"...\",\"port\":3300,\n\"credentials\":\"...\"}}] — instance is required, port defaults to 3300, credentials is optional\n(a service-account JSON key). ⚠ Connect to it with sslmode=disable: the proxy terminates TLS to\nCloud SQL itself and exposes a plaintext local socket, but Go's lib/pq defaults to\nsslmode=require and will fail with \"pq: SSL is not enabled on the server\" otherwise.",
           "type": "array",
@@ -403,6 +410,17 @@ export const TOOLS: ToolSpec[] = [
             },
             "port": {
               "type": "integer"
+            }
+          }
+        },
+        "api_deployment.SecretEnv": {
+          "type": "object",
+          "properties": {
+            "envName": {
+              "type": "string"
+            },
+            "secretId": {
+              "type": "string"
             }
           }
         },
@@ -678,6 +696,13 @@ export const TOOLS: ToolSpec[] = [
           "description": "cronjob schedule (crontab syntax, required and validated only when type is CronJob)",
           "type": "string"
         },
+        "secretEnvs": {
+          "description": "SecretEnvs is nil when absent (retain current bindings), empty to clear, otherwise replaces all bindings.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/api_deployment.SecretEnv"
+          }
+        },
         "sidecars": {
           "description": "Sidecars are optional extra containers alongside the main one, at most 2. Only the Cloud SQL\nProxy kind currently exists: sidecars: [{\"cloudSqlProxy\":{\"instance\":\"...\",\"port\":3300,\n\"credentials\":\"...\"}}] — instance is required, port defaults to 3300, credentials is optional\n(a service-account JSON key). ⚠ Connect to it with sslmode=disable: the proxy terminates TLS to\nCloud SQL itself and exposes a plaintext local socket, but Go's lib/pq defaults to\nsslmode=require and will fail with \"pq: SSL is not enabled on the server\" otherwise.",
           "type": "array",
@@ -723,6 +748,17 @@ export const TOOLS: ToolSpec[] = [
             },
             "port": {
               "type": "integer"
+            }
+          }
+        },
+        "api_deployment.SecretEnv": {
+          "type": "object",
+          "properties": {
+            "envName": {
+              "type": "string"
+            },
+            "secretId": {
+              "type": "string"
             }
           }
         },
@@ -1533,11 +1569,11 @@ export const TOOLS: ToolSpec[] = [
       "type": "object",
       "properties": {
         "cpu": {
-          "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+          "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
           "type": "number"
         },
         "database": {
-          "description": "optional, POSTGRES_DB; empty string if omitted",
+          "description": "optional; provisioned database defaults to user if empty",
           "type": "string"
         },
         "location": {
@@ -1563,6 +1599,16 @@ export const TOOLS: ToolSpec[] = [
         },
         "user": {
           "type": "string"
+        },
+        "version": {
+          "description": "Version is the Postgres major version, \"16\" or \"18\"; empty means \"16\".",
+          "type": "string",
+          "default": "16",
+          "enum": [
+            "16",
+            "18"
+          ],
+          "example": "16"
         }
       },
       "required": [
@@ -1698,7 +1744,7 @@ export const TOOLS: ToolSpec[] = [
       "type": "object",
       "properties": {
         "cpu": {
-          "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+          "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
           "type": "number"
         },
         "location": {
@@ -1855,7 +1901,7 @@ export const TOOLS: ToolSpec[] = [
       "type": "object",
       "properties": {
         "cpu": {
-          "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+          "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
           "type": "number"
         },
         "location": {

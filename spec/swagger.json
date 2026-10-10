@@ -1352,7 +1352,7 @@
                         "BasicAuth": []
                     }
                 ],
-                "description": "Provisions a managed Postgres instance. Managed databases are immutable\nafter creation — there is no update route; to change anything, delete and\nrecreate. get and delete key on {project,name}, not the id this call\nreturns.\n\nProvisioning is asynchronous: this call only stamps the request and\nreturns an id right away. Poll db.postgres.get with {project,name} and\nwatch its host/port fields — both stay empty until the per-cluster\ndeployer applies the kdb custom resource and the kdb operator finishes\nprovisioning, at which point host/port are filled in and actionStatus\nbecomes 2 (success — actionStatus is a plain integer on the wire, 1 =\npending, 2 = success, not the string its name suggests).\n\nRequires the target cluster's `database` feature to be enabled — call\ncluster.list beforehand and check features.database (present = enabled)\nfor the location you intend to use.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_CLUSTER_NOT_SUPPORTED — the target cluster does not have the\ndatabase feature enabled\n- DATABASE_PROJECT_ACCESS_DENIED — the project's billing account is not\nallowed to use this cluster\n- DATABASE_NAME_NOT_AVAILABLE — a database with this name already\nexists in the project\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
+                "description": "Provisions a managed Postgres instance. version selects the Postgres\nmajor version (\"16\" or \"18\", default \"16\"). Managed databases are immutable\nafter creation — there is no update route, version included; to change\nanything, delete and recreate. get and delete key on {project,name}, not the\nid this call returns.\n\nProvisioning is asynchronous: this call only stamps the request and\nreturns an id right away. Poll db.postgres.get with {project,name} and\nwatch readiness. Existing kdb provisioning becomes legacy ready after\nphase and endpoint are reported; that does not verify query or TLS.\nFuture CNPG provisioning requires authenticated query and TLS through\nthe read-write endpoint before returning host/port as verified ready.\nA failed CNPG provision returns readiness=failed with safe diagnostics.\n\nRequires the target cluster's `database` feature to be enabled — call\ncluster.list beforehand and check features.database (present = enabled)\nfor the location you intend to use.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_CLUSTER_NOT_SUPPORTED — the target cluster does not have the\ndatabase feature enabled\n- DATABASE_PROJECT_ACCESS_DENIED — the project's billing account is not\nallowed to use this cluster\n- DATABASE_NAME_NOT_AVAILABLE — a database with this name already\nexists in the project\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
                 "consumes": [
                     "application/json"
                 ],
@@ -1408,7 +1408,7 @@
                         "BasicAuth": []
                     }
                 ],
-                "description": "DESTRUCTIVE: permanently deletes this managed Postgres instance and ALL\nof its data. There is no undo, no backup, and no recovery route — the\nunderlying volume is destroyed along with the workload. Stamps the\ninstance action=delete/pending; the per-cluster deployer removes the\nunderlying kdb resource asynchronously and the row is physically removed\nonce that completes. Key is {project,name}, the same convention as get —\nnot the id create returned.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_NOT_FOUND — no postgres database with this name exists in the\nproject\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
+                "description": "DESTRUCTIVE: deletion is explicit and asynchronous. Stamps the instance\nreadiness=deleting and action=delete/pending; the per-cluster deployer\napplies the configured deletion policy and the row is removed only after\ncompletion is confirmed. Backup/PVC retention is controlled separately.\nKey is {project,name}, the same convention as get —\nnot the id create returned.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_NOT_FOUND — no postgres database with this name exists in the\nproject\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
                 "consumes": [
                     "application/json"
                 ],
@@ -1463,7 +1463,7 @@
                         "BasicAuth": []
                     }
                 ],
-                "description": "Returns one managed Postgres instance's detail, including its\nPostgres-specific fields (user, password, database, storageSize). Key is\n{project,name}, the same convention as delete — not the id create\nreturned. host/port are empty strings until actionStatus is 2 (success —\nactionStatus is a plain integer on the wire, 1 = pending, 2 = success);\npoll this route after create to learn when the instance becomes reachable.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_NOT_FOUND — no postgres database with this name exists in the\nproject\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
+                "description": "Returns one managed Postgres instance's detail, including its\nPostgres-specific fields (user, password, database, storageSize). Key is\n{project,name}, the same convention as delete — not the id create\nreturned. readiness is pending, ready, failed, or deleting. host/port are\nempty until readiness is ready. readinessCheck is legacy for ready kdb,\nquery_tls for CNPG after a verified query/TLS check, and absent otherwise.\ntlsRequired is present only when TLS is confirmed; absent means unknown,\nnot that TLS is unnecessary.\nPoll this route after create to learn when the instance becomes reachable.\n\nErrors (every one of these is HTTP 200 with ok:false):\n- PROJECT_NOT_FOUND — project does not exist or the caller is not a member\n- DATABASE_NOT_FOUND — no postgres database with this name exists in the\nproject\n- VALIDATE_ERROR — params failed validation; error.items lists each\nfailed rule",
                 "consumes": [
                     "application/json"
                 ],
@@ -1545,7 +1545,7 @@
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-nortezh_backend_api_database_ListResult"
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_database_postgres_ListResult"
                         }
                     },
                     "default": {
@@ -1961,6 +1961,48 @@
                     "DEPLOYMENT_ENV_GROUP_NOT_FOUND",
                     "VALIDATE_ERROR"
                 ]
+            }
+        },
+        "/deployment.estimatedPrices": {
+            "post": {
+                "description": "Returns a projected monthly cost for each named deployment: its measured CPU,\nmemory, egress and replica usage over the last 24 hours scaled to a 730-hour\nmonth, at that deployment's location prices. Disk is not included.\nestimatedPrice is null when nothing has been measured yet, or when the estimate\ncould not be produced within the request's time budget — retry in that case.\nNames that do not exist in the project are omitted from the result.\nGuidance only: this is not the amount billed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Deployment"
+                ],
+                "summary": "Estimate monthly cost for deployments",
+                "operationId": "deploymentEstimatedPrices",
+                "parameters": [
+                    {
+                        "description": "params",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_deployment.EstimatedPricesParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_deployment_EstimatedPricesResult"
+                        }
+                    },
+                    "default": {
+                        "description": "Domain error — always HTTP 200 with ok:false. Codes: DEPLOYMENT_PROJECT_ACCESS_DENIED.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                },
+                "x-mcp-read-only": true
             }
         },
         "/deployment.get": {
@@ -4920,6 +4962,445 @@
                 "x-mcp-read-only": true
             }
         },
+        "/secret.audit.list": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Lists redacted audit events for a project. Each event retains actorId and includes actorEmail when the user still exists. Secret values and request bodies are never included. Results are limited to 50 events per page.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "List Secret audit events",
+                "operationId": "secretAuditList",
+                "parameters": [
+                    {
+                        "description": "Audit filters",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.AuditListParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_AuditListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.create": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Creates a project-scoped Secret. The value is encrypted before storage and is not returned by this operation; use `secret.get` to read it.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Create a Secret",
+                "operationId": "secretCreate",
+                "parameters": [
+                    {
+                        "description": "Secret to create",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.CreateParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_Metadata"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NAME_ALREADY_EXISTS, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.delete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Deletes the current Secret revision from normal reads while retaining a tombstone for lifecycle and audit history. Identify it by `id` or `name`, but not both.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Delete a Secret",
+                "operationId": "secretDelete",
+                "parameters": [
+                    {
+                        "description": "Project and Secret name or ID",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.DeleteParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-nortezh_backend_pkg_apidoc_Empty"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.get": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Returns the current plaintext value for one Secret. Identify it by `id` or `name`, but not both. This access is audited.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Get a Secret value",
+                "operationId": "secretGet",
+                "parameters": [
+                    {
+                        "description": "Project and Secret name or ID",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.GetParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_ValueResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.list": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Lists Secret metadata for a project. Secret values are never included in this response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "List Secrets",
+                "operationId": "secretList",
+                "parameters": [
+                    {
+                        "description": "Project",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.ListParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_ListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.target.add": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Adds a permitted Project location without returning Secret material.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Add a Secret sync target",
+                "operationId": "secretTargetAdd",
+                "parameters": [
+                    {
+                        "description": "Secret target",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.TargetMutationParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_Target"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, CLUSTER_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.target.list": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "List Secret sync targets",
+                "operationId": "secretTargetList",
+                "parameters": [
+                    {
+                        "description": "Secret",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.TargetListParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_TargetListResponse"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.target.remove": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Remove a Secret sync target",
+                "operationId": "secretTargetRemove",
+                "parameters": [
+                    {
+                        "description": "Secret target",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.TargetMutationParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_Target"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, SECRET_TARGET_NOT_FOUND, CLUSTER_NOT_FOUND, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/secret.update": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    },
+                    {
+                        "BasicAuth": []
+                    }
+                ],
+                "description": "Replaces a Secret value and increments its revision. Send the revision read from the latest metadata to prevent lost updates; the value is not returned.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Secret"
+                ],
+                "summary": "Update a Secret value",
+                "operationId": "secretUpdate",
+                "parameters": [
+                    {
+                        "description": "Secret update",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api_secret.UpdateParams"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Response-api_secret_Metadata"
+                        }
+                    },
+                    "default": {
+                        "description": "Codes: PROJECT_NOT_FOUND, SECRET_NOT_FOUND, SECRET_REVISION_CONFLICT, VALIDATE_ERROR.",
+                        "schema": {
+                            "$ref": "#/definitions/nortezh_backend_pkg_apidoc.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/serviceaccount.create": {
             "post": {
                 "security": [
@@ -6334,7 +6815,7 @@
             }
         },
         "api_database_mongo.CreateParams": {
-            "description": "Mongo-specific create parameters. user/password seed the initial Mongo user. Mongo has no database field (unlike postgres). storageSize is the persistent volume size in MB. cpu (cores, 0.5-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. There is no image parameter — the image is fixed by the platform (mongo:8.2) and cannot be overridden by the caller.",
+            "description": "Mongo-specific create parameters. user/password seed the initial Mongo user. Mongo has no database field (unlike postgres). storageSize is the persistent volume size in MB. cpu (cores, 0.1-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. There is no image parameter — the image is fixed by the platform (mongo:8.2) and cannot be overridden by the caller.",
             "type": "object",
             "required": [
                 "cpu",
@@ -6348,7 +6829,7 @@
             ],
             "properties": {
                 "cpu": {
-                    "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+                    "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
                     "type": "number"
                 },
                 "location": {
@@ -6382,7 +6863,7 @@
             "type": "object",
             "properties": {
                 "actionStatus": {
-                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer + kdb operator finish\nprovisioning (or finish processing a delete), then becomes 2.",
+                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer confirms the operation,\nthen becomes 2.",
                     "type": "integer",
                     "enum": [
                         1,
@@ -6401,7 +6882,7 @@
                     "type": "string"
                 },
                 "host": {
-                    "description": "Host and Port are empty strings until actionStatus is 2 (success) — poll this\nroute and watch these two fields to learn when the database becomes reachable.",
+                    "description": "Host and Port are empty until the managed database is ready — poll this route\nand watch these two fields to learn when the database becomes reachable.",
                     "type": "string"
                 },
                 "id": {
@@ -6451,7 +6932,7 @@
             }
         },
         "api_database_postgres.CreateParams": {
-            "description": "Postgres-specific create parameters. user/password seed the initial Postgres role. database is optional (POSTGRES_DB) — omit it to skip creating an app database at provision time; it defaults to an empty string, not a generated name. storageSize is the persistent volume size in MB. cpu (cores, 0.5-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. There is no image parameter — the image is fixed by the platform (postgres:16) and cannot be overridden by the caller.",
+            "description": "Postgres-specific create parameters. user/password seed the initial Postgres role. database is optional — when omitted, the provisioned database defaults to the user name (as with kdb's POSTGRES_DB default), while get.database remains empty. storageSize is the persistent volume size in MB. cpu (cores, 0.1-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. version picks the Postgres major version (\"16\" or \"18\", default \"16\") and cannot be changed after create. There is no image parameter — the platform maps the version to its image (postgres:16 / postgres:18), reported back as get.image.",
             "type": "object",
             "required": [
                 "cpu",
@@ -6465,11 +6946,11 @@
             ],
             "properties": {
                 "cpu": {
-                    "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+                    "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
                     "type": "number"
                 },
                 "database": {
-                    "description": "optional, POSTGRES_DB; empty string if omitted",
+                    "description": "optional; provisioned database defaults to user if empty",
                     "type": "string"
                 },
                 "location": {
@@ -6495,6 +6976,16 @@
                 },
                 "user": {
                     "type": "string"
+                },
+                "version": {
+                    "description": "Version is the Postgres major version, \"16\" or \"18\"; empty means \"16\".",
+                    "type": "string",
+                    "default": "16",
+                    "enum": [
+                        "16",
+                        "18"
+                    ],
+                    "example": "16"
                 }
             }
         },
@@ -6503,7 +6994,7 @@
             "type": "object",
             "properties": {
                 "actionStatus": {
-                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer + kdb operator finish\nprovisioning (or finish processing a delete), then becomes 2.",
+                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer confirms the operation,\nthen becomes 2.",
                     "type": "integer",
                     "enum": [
                         1,
@@ -6522,11 +7013,17 @@
                     "type": "string"
                 },
                 "database": {
-                    "description": "Database is the POSTGRES_DB name given at create, or \"\" if it was omitted.",
+                    "description": "Database is the requested name, or \"\" if omitted (the provisioned name defaults to User).",
+                    "type": "string"
+                },
+                "failureCode": {
+                    "type": "string"
+                },
+                "failureMessage": {
                     "type": "string"
                 },
                 "host": {
-                    "description": "Host and Port are empty strings until actionStatus is 2 (success) — poll this\nroute and watch these two fields to learn when the database becomes reachable.",
+                    "description": "Host and Port are empty until the managed database is ready — poll this route\nand watch these two fields to learn when the database becomes reachable.",
                     "type": "string"
                 },
                 "id": {
@@ -6557,9 +7054,22 @@
                 "project": {
                     "type": "string"
                 },
+                "readiness": {
+                    "$ref": "#/definitions/nortezh_backend_api_database.Readiness"
+                },
+                "readinessCheck": {
+                    "description": "ReadinessCheck distinguishes legacy phase/endpoint from verified CNPG query/TLS.",
+                    "type": "string"
+                },
+                "readyAt": {
+                    "type": "string"
+                },
                 "storageSize": {
                     "description": "StorageSize is the persistent volume size in MB, as given at create.",
                     "type": "integer"
+                },
+                "tlsRequired": {
+                    "type": "boolean"
                 },
                 "type": {
                     "type": "string",
@@ -6575,8 +7085,96 @@
                 }
             }
         },
+        "api_database_postgres.ListItem": {
+            "type": "object",
+            "properties": {
+                "actionStatus": {
+                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer confirms the operation,\nthen becomes 2.",
+                    "type": "integer",
+                    "enum": [
+                        1,
+                        2
+                    ],
+                    "example": 2
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "failureCode": {
+                    "type": "string"
+                },
+                "failureMessage": {
+                    "type": "string"
+                },
+                "host": {
+                    "description": "Host and Port are empty until the managed database is ready.",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "image": {
+                    "type": "string"
+                },
+                "lastDeployedAt": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "port": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "readiness": {
+                    "$ref": "#/definitions/nortezh_backend_api_database.Readiness"
+                },
+                "readinessCheck": {
+                    "description": "Legacy ready means phase + endpoint; query_tls means authenticated query and TLS passed.",
+                    "type": "string"
+                },
+                "readyAt": {
+                    "type": "string"
+                },
+                "tlsRequired": {
+                    "type": "boolean"
+                },
+                "type": {
+                    "description": "Type is always the engine this list route was called on (db.postgres.list only\never returns \"postgres\" items, etc.) — included for shape parity with get.",
+                    "type": "string",
+                    "enum": [
+                        "postgres",
+                        "redis",
+                        "mongo"
+                    ],
+                    "example": "postgres"
+                }
+            }
+        },
+        "api_database_postgres.ListResult": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_database_postgres.ListItem"
+                    }
+                },
+                "paginate": {
+                    "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Paginate"
+                }
+            }
+        },
         "api_database_redis.CreateParams": {
-            "description": "Redis-specific create parameters. Redis has no user and no database field (unlike postgres and mongo) — only a password. storageSize is the persistent volume size in MB. cpu (cores, 0.5-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. There is no image parameter — the image is fixed by the platform (redis:8) and cannot be overridden by the caller.",
+            "description": "Redis-specific create parameters. Redis has no user and no database field (unlike postgres and mongo) — only a password. storageSize is the persistent volume size in MB. cpu (cores, 0.1-4) and memory (MiB, 256-4096) are both required and each applied to BOTH the k8s resource request and limit. There is no image parameter — the image is fixed by the platform (redis:8) and cannot be overridden by the caller.",
             "type": "object",
             "required": [
                 "cpu",
@@ -6589,7 +7187,7 @@
             ],
             "properties": {
                 "cpu": {
-                    "description": "CPU is in cores (0.5-4), applied to both the k8s resource request and limit.",
+                    "description": "CPU is in cores (0.1-4), applied to both the k8s resource request and limit.",
                     "type": "number"
                 },
                 "location": {
@@ -6620,7 +7218,7 @@
             "type": "object",
             "properties": {
                 "actionStatus": {
-                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer + kdb operator finish\nprovisioning (or finish processing a delete), then becomes 2.",
+                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer confirms the operation,\nthen becomes 2.",
                     "type": "integer",
                     "enum": [
                         1,
@@ -6639,7 +7237,7 @@
                     "type": "string"
                 },
                 "host": {
-                    "description": "Host and Port are empty strings until actionStatus is 2 (success) — poll this\nroute and watch these two fields to learn when the database becomes reachable.",
+                    "description": "Host and Port are empty until the managed database is ready — poll this route\nand watch these two fields to learn when the database becomes reachable.",
                     "type": "string"
                 },
                 "id": {
@@ -6869,6 +7467,13 @@
                     "description": "cronjob schedule (crontab syntax, required and validated only when type is CronJob)",
                     "type": "string"
                 },
+                "secretEnvs": {
+                    "description": "SecretEnvs is nil when absent (retain current bindings), empty to clear, otherwise replaces all bindings.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_deployment.SecretEnv"
+                    }
+                },
                 "sidecars": {
                     "description": "Sidecars are optional extra containers alongside the main one, at most 2. Only the Cloud SQL\nProxy kind currently exists: sidecars: [{\"cloudSqlProxy\":{\"instance\":\"...\",\"port\":3300,\n\"credentials\":\"...\"}}] — instance is required, port defaults to 3300, credentials is optional\n(a service-account JSON key). ⚠ Connect to it with sslmode=disable: the proxy terminates TLS to\nCloud SQL itself and exposes a plaintext local socket, but Go's lib/pq defaults to\nsslmode=require and will fail with \"pq: SSL is not enabled on the server\" otherwise.",
                     "type": "array",
@@ -6914,6 +7519,49 @@
                 },
                 "subPath": {
                     "type": "string"
+                }
+            }
+        },
+        "api_deployment.EstimatedPricesItem": {
+            "type": "object",
+            "properties": {
+                "estimatedPrice": {
+                    "description": "EstimatedPrice is null when nothing has been measured for this deployment yet — paused,\nnewly created, or failed — and also when the estimate could not be produced in time.",
+                    "type": "number",
+                    "example": 12.438
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_deployment.EstimatedPricesParams": {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "example": [
+                        "api",
+                        "web-fe"
+                    ]
+                },
+                "project": {
+                    "type": "string",
+                    "example": "my-project"
+                }
+            }
+        },
+        "api_deployment.EstimatedPricesResult": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_deployment.EstimatedPricesItem"
+                    }
                 }
             }
         },
@@ -7102,6 +7750,12 @@
                 },
                 "schedule": {
                     "type": "string"
+                },
+                "secretEnvs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_deployment.SecretEnvBinding"
+                    }
                 },
                 "sidecars": {
                     "type": "array",
@@ -7520,6 +8174,47 @@
                     "type": "integer"
                 }
             }
+        },
+        "api_deployment.SecretEnv": {
+            "type": "object",
+            "properties": {
+                "envName": {
+                    "type": "string"
+                },
+                "secretId": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_deployment.SecretEnvBinding": {
+            "type": "object",
+            "properties": {
+                "envName": {
+                    "type": "string"
+                },
+                "secretId": {
+                    "type": "string"
+                },
+                "secretName": {
+                    "type": "string"
+                },
+                "state": {
+                    "$ref": "#/definitions/api_deployment.SecretEnvState"
+                }
+            }
+        },
+        "api_deployment.SecretEnvState": {
+            "type": "string",
+            "enum": [
+                "up_to_date",
+                "pending",
+                "unavailable"
+            ],
+            "x-enum-varnames": [
+                "SecretEnvUpToDate",
+                "SecretEnvPending",
+                "SecretEnvUnavailable"
+            ]
         },
         "api_disk.BindingDeployment": {
             "type": "object",
@@ -9443,6 +10138,342 @@
                 }
             }
         },
+        "api_secret.AuditEvent": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string"
+                },
+                "actorEmail": {
+                    "type": "string"
+                },
+                "actorId": {
+                    "type": "string"
+                },
+                "correlationId": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "outcome": {
+                    "type": "string"
+                },
+                "requestId": {
+                    "type": "string"
+                },
+                "secretId": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_secret.AuditListParams": {
+            "type": "object",
+            "required": [
+                "project"
+            ],
+            "properties": {
+                "cursor": {
+                    "type": "string",
+                    "example": "eyJjcmVhdGVkQXQiOiIyMDI2LTAxLTAxVDAwOjAwOjAwWiIsImlkIjoxfQ"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "database-password"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                }
+            }
+        },
+        "api_secret.AuditListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_secret.AuditEvent"
+                    }
+                },
+                "nextCursor": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_secret.CreateParams": {
+            "type": "object",
+            "required": [
+                "name",
+                "project",
+                "value"
+            ],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "database-password"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "example-only-not-a-real-secret"
+                }
+            }
+        },
+        "api_secret.DeleteParams": {
+            "type": "object",
+            "required": [
+                "project"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "6683714389973226603"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "database-password"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                }
+            }
+        },
+        "api_secret.GetParams": {
+            "type": "object",
+            "required": [
+                "project"
+            ],
+            "properties": {
+                "id": {
+                    "type": "string",
+                    "example": "6683714389973226603"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "database-password"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                }
+            }
+        },
+        "api_secret.ListParams": {
+            "type": "object",
+            "required": [
+                "project"
+            ],
+            "properties": {
+                "paginate": {
+                    "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Paginate"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                }
+            }
+        },
+        "api_secret.ListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_secret.Metadata"
+                    }
+                },
+                "paginate": {
+                    "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Paginate"
+                }
+            }
+        },
+        "api_secret.Metadata": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "valueRevision": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api_secret.Target": {
+            "type": "object",
+            "properties": {
+                "confirmedRevision": {
+                    "type": "integer"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "desiredRevision": {
+                    "type": "integer"
+                },
+                "lastErrorCode": {
+                    "type": "string"
+                },
+                "location": {
+                    "type": "string"
+                },
+                "secretId": {
+                    "type": "string"
+                },
+                "status": {
+                    "$ref": "#/definitions/api_secret.TargetStatus"
+                },
+                "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "api_secret.TargetListParams": {
+            "type": "object",
+            "required": [
+                "project",
+                "secretId"
+            ],
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                },
+                "secretId": {
+                    "type": "string",
+                    "example": "6683714389973226603"
+                }
+            }
+        },
+        "api_secret.TargetListResponse": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api_secret.Target"
+                    }
+                }
+            }
+        },
+        "api_secret.TargetMutationParams": {
+            "type": "object",
+            "required": [
+                "location",
+                "project",
+                "secretId"
+            ],
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "example": "nortezh-0"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                },
+                "secretId": {
+                    "type": "string",
+                    "example": "6683714389973226603"
+                }
+            }
+        },
+        "api_secret.TargetStatus": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "synced",
+                "failed",
+                "deleted"
+            ],
+            "x-enum-varnames": [
+                "TargetStatusPending",
+                "TargetStatusSynced",
+                "TargetStatusFailed",
+                "TargetStatusDeleted"
+            ]
+        },
+        "api_secret.UpdateParams": {
+            "type": "object",
+            "required": [
+                "expectedRevision",
+                "project",
+                "value"
+            ],
+            "properties": {
+                "expectedRevision": {
+                    "type": "integer",
+                    "example": 1
+                },
+                "id": {
+                    "type": "string",
+                    "example": "6683714389973226603"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "database-password"
+                },
+                "project": {
+                    "type": "string",
+                    "example": "test"
+                },
+                "value": {
+                    "type": "string",
+                    "example": "example-only-not-a-real-secret"
+                }
+            }
+        },
+        "api_secret.ValueResponse": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "createdBy": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "project": {
+                    "type": "string"
+                },
+                "updatedAt": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                },
+                "valueRevision": {
+                    "type": "integer"
+                }
+            }
+        },
         "api_serviceaccount.CreateKeyParams": {
             "type": "object",
             "required": [
@@ -9673,7 +10704,7 @@
             "type": "object",
             "properties": {
                 "actionStatus": {
-                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer + kdb operator finish\nprovisioning (or finish processing a delete), then becomes 2.",
+                    "description": "ActionStatus marshals as a plain JSON number, not a name (verified against\npkg/api.ActionStatus — its String() method exists but is never invoked by\nencoding/json, because the type's marshal methods are named JSONMarshal/\nJSONUnmarshal, not MarshalJSON/UnmarshalJSON, so the default integer encoding of\nthe underlying int is what actually goes on the wire): 1 = pending, 2 = success,\nno separate failed value. Stays 1 until the deployer confirms the operation,\nthen becomes 2.",
                     "type": "integer",
                     "enum": [
                         1,
@@ -9688,7 +10719,7 @@
                     "type": "string"
                 },
                 "host": {
-                    "description": "Host and Port are empty strings until actionStatus is 2 (success) — the managed\ndatabase is not reachable before then.",
+                    "description": "Host and Port are empty until the managed database is ready.",
                     "type": "string"
                 },
                 "id": {
@@ -9755,6 +10786,21 @@
                     "$ref": "#/definitions/nortezh_backend_pkg_apidoc.Paginate"
                 }
             }
+        },
+        "nortezh_backend_api_database.Readiness": {
+            "type": "string",
+            "enum": [
+                "pending",
+                "ready",
+                "failed",
+                "deleting"
+            ],
+            "x-enum-varnames": [
+                "ReadinessPending",
+                "ReadinessReady",
+                "ReadinessFailed",
+                "ReadinessDeleting"
+            ]
         },
         "nortezh_backend_pkg_api.ActionStatus": {
             "type": "integer",
@@ -10047,6 +11093,18 @@
                 }
             }
         },
+        "nortezh_backend_pkg_apidoc.Response-api_database_postgres_ListResult": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_database_postgres.ListResult"
+                }
+            }
+        },
         "nortezh_backend_pkg_apidoc.Response-api_database_redis_GetResponse": {
             "type": "object",
             "properties": {
@@ -10068,6 +11126,18 @@
                 },
                 "result": {
                     "$ref": "#/definitions/api_deployment.CreateResult"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_deployment_EstimatedPricesResult": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_deployment.EstimatedPricesResult"
                 }
             }
         },
@@ -10560,6 +11630,78 @@
                 },
                 "result": {
                     "$ref": "#/definitions/api_route.ListResponse"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_AuditListResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.AuditListResponse"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_ListResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.ListResponse"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_Metadata": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.Metadata"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_Target": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.Target"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_TargetListResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.TargetListResponse"
+                }
+            }
+        },
+        "nortezh_backend_pkg_apidoc.Response-api_secret_ValueResponse": {
+            "type": "object",
+            "properties": {
+                "ok": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "result": {
+                    "$ref": "#/definitions/api_secret.ValueResponse"
                 }
             }
         },
